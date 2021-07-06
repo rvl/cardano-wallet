@@ -39,6 +39,7 @@ library
     , bytestring
     , cardano-addresses
     , cardano-api
+    , cardano-binary
     , cardano-crypto
     , cardano-numeric
     , cardano-slotting
@@ -259,6 +260,7 @@ test-suite unit
     , cardano-addresses
     , cardano-api
     , cardano-crypto
+    , cardano-crypto-class
     , cardano-numeric
     , cardano-wallet-core
     , cardano-wallet-launcher
@@ -280,6 +282,7 @@ test-suite unit
     , foldl
     , generic-arbitrary
     , generic-lens
+    , hedgehog-quickcheck
     , hspec >= 2.8.2
     , hspec-core >= 2.8.2
     , http-api-data
