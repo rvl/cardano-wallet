@@ -380,14 +380,22 @@ newDBLayer tr ti SqliteContext{runQuery} =
             -- NOTE
             -- assuming SQLite has the same notion of "now" that the host system.
             now <- liftIO getCurrentTime
-            retryCount <- maybe 0 (poolFetchAttemptsRetryCount . entityVal) <$> selectFirst
-                [ PoolFetchAttemptsMetadataHash ==. hash
-                , PoolFetchAttemptsMetadataUrl  ==. url
-                ] []
-            let retryAfter = backoff now retryCount
-            repsert
-                (PoolMetadataFetchAttemptsKey hash url)
-                (PoolMetadataFetchAttempts hash url retryAfter (retryCount + 1))
+            let filters =
+                    [ PoolFetchAttemptsMetadataHash ==. hash
+                    , PoolFetchAttemptsMetadataUrl  ==. url
+                    ]
+            (fmap entityVal <$> selectFirst filters []) >>= \case
+                Nothing -> do
+                    let retryAfter = backoff now 0
+                    repsert
+                        (PoolMetadataFetchAttemptsKey hash url)
+                        (PoolMetadataFetchAttempts hash url retryAfter 1)
+
+                Just (PoolMetadataFetchAttempts _ _ _ retryCount) -> do
+                    let retryAfter = backoff now retryCount
+                    repsert
+                        (PoolMetadataFetchAttemptsKey hash url)
+                        (PoolMetadataFetchAttempts hash url retryAfter $ retryCount + 1)
 
         putPoolMetadata hash metadata = do
             let StakePoolMetadata

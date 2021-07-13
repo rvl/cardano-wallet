@@ -5,7 +5,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {- HLINT ignore "Use camelCase" -}
-{- HLINT ignore "Functor law" -}
 
 module Cardano.Wallet.Primitive.Types.TokenMapSpec
     ( spec

@@ -27,8 +27,6 @@ import Control.DeepSeq
     ( NFData (..) )
 import Data.Bifunctor
     ( bimap )
-import Data.Either
-    ( fromRight )
 import Data.Quantity
     ( Percentage (..), Quantity (..), mkPercentage )
 import Data.Ratio
@@ -143,7 +141,7 @@ syncProgress (SyncTolerance tolerance) ti tip now = do
         return
         . Syncing
         . Quantity
-        . fromRight (error $ errMsg progress)
+        . either (const . error $ errMsg progress) id
         . mkPercentage
         . toRational
         $ progress

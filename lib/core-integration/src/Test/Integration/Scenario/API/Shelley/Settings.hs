@@ -32,8 +32,6 @@ import Cardano.Wallet.Primitive.Types
     ( PoolMetadataSource (..), Settings )
 import Cardano.Wallet.Primitive.Types.Coin
     ( Coin (..) )
-import Data.Either
-    ( fromRight )
 import Data.Generics.Internal.VL.Lens
     ( view )
 import Data.Maybe
@@ -79,7 +77,7 @@ spec = describe "SHELLEY_SETTINGS" $ do
             verify r2
                 [ expectResponseCode HTTP.status200
                 , expectField (#getApiT . #poolMetadataSource)
-                    (`shouldBe` (fromRight (error "no") $ fromText
+                    (`shouldBe` (either (const (error "no")) id $ fromText
                         @PoolMetadataSource uri))
                 ]
 
