@@ -29,18 +29,13 @@
 -- Conversion functions and static chain settings for Shelley.
 
 module Cardano.Wallet.Shelley.Compatibility
-    ( AnyCardanoEra(..)
-    , CardanoEra(..)
-    , ShelleyEra
-    , AllegraEra
-    , CardanoBlock
-    , NetworkId(..)
-
-    , NodeToClientVersionData
+    ( CardanoBlock
     , StandardCrypto
     , StandardShelley
 
       -- * Protocol Parameters
+    , NetworkId (..)
+    , NodeToClientVersionData
     , nodeToClientVersions
 
       -- * Node Connection
@@ -48,6 +43,12 @@ module Cardano.Wallet.Shelley.Compatibility
 
       -- * Genesis
     , emptyGenesis
+
+      -- * Eras
+    , AnyCardanoEra (..)
+    , CardanoEra (..)
+    , ShelleyBasedEra (..)
+    , shelleyBasedToCardanoEra
 
       -- * Conversions
     , toCardanoHash
@@ -140,6 +141,7 @@ import Cardano.Api
     , LocalNodeConnectInfo (LocalNodeConnectInfo)
     , MaryEra
     , NetworkId
+    , ShelleyBasedEra (..)
     , ShelleyEra
     , TxInMode (..)
     , deserialiseFromRawBytes
@@ -853,20 +855,6 @@ fromCardanoTx = \case
   where
     getTx (txwal, _, _) = txwal
 
-{-
-fromCardanoTx :: Era era => Cardano.Tx era -> W.Tx
-fromCardanoTx (Cardano.Tx tx@(Cardano.TxBody body) keyWits) = W.Tx
-    { txId = W.Hash $ Cardano.serialiseToRawBytes $ Cardano.getTxId tx
-    , fee = case Cardano.txFee body of
-            Cardano.TxFeeImplicit _ -> Nothing
-            Cardano.TxFeeExplicit _ f -> Just $ coinFromLovelace f
-    , resolvedInputs = error "fixme"
-    , outputs = error "fixme"
-    , withdrawals = error "fixme"
-    , metadata = error "fixme"
-    }
--}
-
 -- NOTE: For resolved inputs we have to pass in a dummy value of 0.
 fromShelleyTx
     :: SLAPI.Tx (Cardano.ShelleyLedgerEra ShelleyEra)
@@ -1320,22 +1308,25 @@ rewardAccountFromAddress (W.Address bytes) = refToAccount . ref =<< parseAddr by
 
 -- | Converts 'SealedTx' to something that can be submitted with the
 -- 'Cardano.Api' local tx submission client.
---
--- Byron transactions are not supported.
-unsealShelleyTx
-    :: W.SealedTx
-    -> Maybe (TxInMode CardanoMode)
+unsealShelleyTx :: W.SealedTx -> TxInMode CardanoMode
 unsealShelleyTx wtx = case W.cardanoTx wtx of
-    Cardano.InAnyCardanoEra ByronEra _tx -> Nothing
+    Cardano.InAnyCardanoEra ByronEra tx ->
+        TxInMode tx ByronEraInCardanoMode
     Cardano.InAnyCardanoEra ShelleyEra tx ->
-        Just $ TxInMode tx ShelleyEraInCardanoMode
+        TxInMode tx ShelleyEraInCardanoMode
     Cardano.InAnyCardanoEra AllegraEra tx ->
-        Just $ TxInMode tx AllegraEraInCardanoMode
+        TxInMode tx AllegraEraInCardanoMode
     Cardano.InAnyCardanoEra MaryEra tx ->
-        Just $ TxInMode tx MaryEraInCardanoMode
+        TxInMode tx MaryEraInCardanoMode
     Cardano.InAnyCardanoEra AlonzoEra tx ->
-        Just $ TxInMode tx AlonzoEraInCardanoMode
+        TxInMode tx AlonzoEraInCardanoMode
 
+-- | Converts a 'ShelleyBasedEra' to the broader 'CardanoEra'.
+shelleyBasedToCardanoEra :: ShelleyBasedEra era -> CardanoEra era
+shelleyBasedToCardanoEra Cardano.ShelleyBasedEraShelley = ShelleyEra
+shelleyBasedToCardanoEra Cardano.ShelleyBasedEraAllegra = AllegraEra
+shelleyBasedToCardanoEra Cardano.ShelleyBasedEraMary    = MaryEra
+shelleyBasedToCardanoEra Cardano.ShelleyBasedEraAlonzo  = AlonzoEra
 
 {-------------------------------------------------------------------------------
                    Assessing sizes of token bundles

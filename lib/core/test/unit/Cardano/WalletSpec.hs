@@ -142,7 +142,7 @@ import Cardano.Wallet.Primitive.Types.Tx.Gen
 import Cardano.Wallet.Primitive.Types.UTxO
     ( UTxO (..) )
 import Cardano.Wallet.Transaction
-    ( ErrMkTx (..)
+    ( ErrSignTx (..)
     , TransactionLayer (..)
     , Withdrawal (..)
     , defaultTransactionCtx
@@ -913,8 +913,8 @@ prop_localTxSubmission tc = monadicIO $ do
                 stash var tx
                 pure $ case lookup tx (postTxResults tc) of
                     Just True -> Right ()
-                    Just False -> Left (W.ErrPostTxBadRequest "intended")
-                    Nothing -> Left (W.ErrPostTxProtocolFailure "unexpected")
+                    Just False -> Left (W.ErrPostTxValidationError "intended")
+                    Nothing -> Left (W.ErrPostTxValidationError "unexpected")
         , watchNodeTip = mockNodeTip (numSlots tc) 0
         }
 
@@ -1294,15 +1294,15 @@ dummyTransactionLayer = TransactionLayer
         let tid = mkTxId inps' (outputsCovered cs) mempty Nothing
         let tx = Tx tid Nothing inps' (outputsCovered cs) mempty Nothing
         wits <- forM (inputsSelected cs) $ \(_, TxOut addr _) -> do
-            (xprv, pwd) <- withEither (ErrKeyNotFoundForAddress addr) $ keystore addr
+            (xprv, pwd) <- withEither (ErrSignTxKeyNotFound addr) $ keystore addr
             pure (getKey xprv, pwd)
 
         -- (tx1, wits1) == (tx2, wits2) <==> fakebinary1 == fakebinary2
         let validBinary = makeSealedTx tx (NE.toList wits)
         return (tx, validBinary)
 
-    , mkUnsignedTransaction =
-        error "dummyTransactionLayer: mkUnsignedTransaction not implemented"
+    , mkTransactionBody =
+        error "dummyTransactionLayer: mkTransactionBody not implemented"
     , mkSignedTransaction =
         error "dummyTransactionLayer: mkSignedTransaction not implemented"
     , initSelectionCriteria =

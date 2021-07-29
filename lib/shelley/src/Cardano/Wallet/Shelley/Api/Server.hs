@@ -308,7 +308,7 @@ server byron icarus shelley multisig spl ntp =
     shelleyTransactions :: Server (ShelleyTransactions n)
     shelleyTransactions =
              constructTransaction shelley (delegationAddress @n)
-        :<|> signTransaction shelley
+        :<|> signTransaction (Proxy @n) shelley
         :<|> listTransactions shelley
         :<|> getTransaction shelley
         :<|> deleteTransaction shelley
@@ -455,8 +455,8 @@ server byron icarus shelley multisig spl ntp =
              )
         :<|> (\wid tx ->
                  withLegacyLayer wid
-                 (byron, signTransaction byron wid tx)
-                 (icarus, signTransaction icarus wid tx)
+                 (byron, signTransaction (Proxy @n) byron wid tx)
+                 (icarus, signTransaction (Proxy @n) icarus wid tx)
              )
         :<|> (\wid r0 r1 s -> withLegacyLayer wid
                 (byron , listTransactions byron wid Nothing r0 r1 s)
