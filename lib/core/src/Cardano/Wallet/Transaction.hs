@@ -25,9 +25,9 @@ module Cardano.Wallet.Transaction
     , defaultTransactionCtx
     , Withdrawal (..)
     , withdrawalToCoin
+    , addResolvedInputs
 
     -- * Errors
-    , ErrMkTx (..)
     , ErrSignTx (..)
     , ErrDecodeSignedTx (..)
     , ErrSelectionCriteria (..)
@@ -45,7 +45,7 @@ import Cardano.Api
 import Cardano.Wallet.Primitive.AddressDerivation
     ( Depth (..), DerivationIndex, Passphrase )
 import Cardano.Wallet.Primitive.CoinSelection.MA.RoundRobin
-    ( SelectionCriteria, SelectionResult, SelectionSkeleton )
+    ( SelectionCriteria, SelectionResult (..), SelectionSkeleton )
 import Cardano.Wallet.Primitive.Types
     ( PoolId, ProtocolParameters, SlotNo (..) )
 import Cardano.Wallet.Primitive.Types.Address
@@ -60,24 +60,24 @@ import Cardano.Wallet.Primitive.Types.TokenQuantity
     ( TokenQuantity )
 import Cardano.Wallet.Primitive.Types.Tx
     ( SealedTx (..)
-    , SerialisedTx (..)
     , TokenBundleSizeAssessor
     , Tx (..)
     , TxConstraints
     , TxIn
     , TxMetadata
     , TxOut
+    , txOutCoin
     )
 import Cardano.Wallet.Primitive.Types.UTxOIndex
     ( UTxOIndex )
-import Data.ByteString
-    ( ByteString )
 import Data.List.NonEmpty
     ( NonEmpty )
 import Data.Text
     ( Text )
 import GHC.Generics
     ( Generic )
+
+import qualified Data.List.NonEmpty as NE
 
 data TransactionLayer k = TransactionLayer
     { mkTransaction
@@ -94,7 +94,7 @@ data TransactionLayer k = TransactionLayer
         -> SelectionResult TxOut
             -- A balanced coin selection where all change addresses have been
             -- assigned.
-        -> Either ErrMkTx (Tx, SealedTx)
+        -> Either ErrSignTx (Tx, SealedTx)
         -- ^ Construct a standard transaction
         --
         -- " Standard " here refers to the fact that we do not deal with redemption,
@@ -103,7 +103,7 @@ data TransactionLayer k = TransactionLayer
         -- This expects as a first argument a mean to compute or lookup private
         -- key corresponding to a particular address.
 
-    , mkUnsignedTransaction
+    , mkTransactionBody
         :: AnyCardanoEra
             -- Era for which the transaction should be created.
         -> XPub
@@ -115,7 +115,7 @@ data TransactionLayer k = TransactionLayer
         -> SelectionResult TxOut
             -- A balanced coin selection where all change addresses have been
             -- assigned.
-        -> Either ErrMkTx SerialisedTx
+        -> Either ErrSignTx SealedTx
         -- ^ Construct a standard unsigned transaction
         --
         -- " Standard " here refers to the fact that we do not deal with redemption,
@@ -126,11 +126,13 @@ data TransactionLayer k = TransactionLayer
     , mkSignedTransaction
         :: (XPrv, Passphrase "encryption")
             -- Reward account
-        -> (TxIn -> Maybe (k 'AddressK XPrv, Passphrase "encryption"))
+        -> (TxIn -> Maybe Address)
+            -- Input resolver
+        -> (Address -> Maybe (k 'AddressK XPrv, Passphrase "encryption"))
             -- Key store
         -> SealedTx
             -- serialized unsigned transaction
-        -> Either ErrSignTx (Tx, SealedTx)
+        -> Either ErrSignTx SealedTx
         -- ^ Sign a transaction
 
     , initSelectionCriteria
@@ -166,11 +168,9 @@ data TransactionLayer k = TransactionLayer
         -- The set of constraints that apply to all transactions.
 
     , decodeSignedTx
-        :: AnyCardanoEra
-        -> ByteString
-        -> Either ErrDecodeSignedTx (Tx, SealedTx)
+        :: SealedTx
+        -> Tx
         -- ^ Decode an externally-signed transaction to the chain producer
-
     }
     deriving Generic
 
@@ -209,6 +209,11 @@ defaultTransactionCtx = TransactionCtx
     , txTimeToLive = maxBound
     , txDelegationAction = Nothing
     }
+
+-- | Use coin selection to provide resolved inputs of transaction.
+addResolvedInputs :: SelectionResult change -> Tx -> Tx
+addResolvedInputs cs tx = tx
+    { resolvedInputs = fmap txOutCoin <$> NE.toList (inputsSelected cs) }
 
 -- | Whether the user is attempting any particular delegation action.
 data DelegationAction = RegisterKeyAndJoin PoolId | Join PoolId | Quit
@@ -252,23 +257,14 @@ data ErrDecodeSignedTx
     deriving (Show, Eq)
 
 -- | Possible signing error
-data ErrMkTx
-    = ErrKeyNotFoundForAddress Address
-    -- ^ We tried to sign a transaction with inputs that are unknown to us?
-    | ErrConstructedInvalidTx Text
-    -- ^ We failed to construct a transaction for some reasons.
-    | ErrInvalidEra AnyCardanoEra
-    -- ^ Should never happen, means that that we have programmatically provided
-    -- an invalid era.
-    deriving (Eq, Show)
-
--- | Possible signing error
 data ErrSignTx
-    = ErrSignTxKeyNotFoundForAddress TxIn
+    = ErrSignTxAddressUnknown TxIn
     -- ^ We tried to sign a transaction with inputs that are unknown to us?
-    | ErrSignTxInvalidSerializedTx Text
-    -- ^ We failed to deserialize an unsigned transaction.
-    | ErrSignTxInvalidEra
+    | ErrSignTxKeyNotFound Address
+    -- ^ We tried to sign a transaction with inputs that are unknown to us?
+    | ErrSignTxBodyError Text
+    -- ^ We failed to construct a transaction for some reasons.
+    | ErrSignTxInvalidEra AnyCardanoEra
     -- ^ Should never happen, means that that we have programmatically provided
     -- an invalid era.
     deriving (Eq, Show)

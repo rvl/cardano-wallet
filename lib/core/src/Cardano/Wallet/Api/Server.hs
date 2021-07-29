@@ -144,7 +144,6 @@ import Cardano.Wallet
     , ErrListTransactions (..)
     , ErrListUTxOStatistics (..)
     , ErrMintBurnAssets (..)
-    , ErrMkTx (..)
     , ErrNoSuchTransaction (..)
     , ErrNoSuchWallet (..)
     , ErrNotASequentialWallet (..)
@@ -412,8 +411,7 @@ import Cardano.Wallet.Primitive.Types.TokenMap
 import Cardano.Wallet.Primitive.Types.TokenPolicy
     ( TokenName (..), TokenPolicyId (..), nullTokenName )
 import Cardano.Wallet.Primitive.Types.Tx
-    ( SerialisedTx (..)
-    , TransactionInfo (TransactionInfo)
+    ( TransactionInfo (TransactionInfo)
     , Tx (..)
     , TxChange (..)
     , TxIn (..)
@@ -464,8 +462,6 @@ import Crypto.Hash.Utils
     ( blake2b224 )
 import Data.Aeson
     ( (.=) )
-import Data.Bifunctor
-    ( first )
 import Data.ByteString
     ( ByteString )
 import Data.Coerce
@@ -1787,31 +1783,41 @@ listAddresses ctx normalize (ApiT wid) stateFilter = do
 -------------------------------------------------------------------------------}
 
 signTransaction
-    :: forall ctx s k.
+    :: forall ctx s k (n :: NetworkDiscriminant).
         ( ctx ~ ApiLayer s k
         , IsOwned s k
+        , HardDerivation k
+        , Bounded (Index (AddressIndexDerivationType k) 'AddressK)
         , WalletKey k
+        , Typeable n
+        , Typeable s
         )
-    => ctx
+    => Proxy n
+    -> ctx
     -> ApiT WalletId
     -> ApiSignTransactionPostData
     -> Handler ApiSignedTransaction
-signTransaction ctx (ApiT wid) body = do
-    let pwd = coerce $ body ^. #passphrase . #getApiT
-    let tx = body ^. #transaction . #getApiT
+signTransaction _ ctx (ApiT wid) body = do
+    -- TODO: It is currently up to the user to add withdrawal information to the
+    -- request. In future we should determine the credentials required from
+    -- transaction and validate.
+    (_, mkRwdAcct) <- mkRewardAccountBuilder @_ @s @_ @n ctx wid wdrlReq
 
-    -- (_, mkRwdAcct) <- mkRewardAccountBuilder @_ @s @_ @n ctx wid Nothing
-    let stubRwdAcct = first getRawKey
+    withWorkerCtx ctx wid liftE liftE $ \wrk -> liftHandler $
+        mkApi <$> W.signTransaction @_ @s @k wrk wid mkRwdAcct pwd txReq
+ where
+   pwd = coerce (body ^. #passphrase . #getApiT)
+   txReq = body ^. #transaction . #getApiT
+   wdrlReq = body ^. #withdrawal
 
-    signed <- withWorkerCtx ctx wid liftE liftE $ \wrk ->
-        liftHandler $ W.signTransaction @_ @s @k wrk wid stubRwdAcct pwd tx
-
-    let W.SerialisedTxParts txBody txWits = getSerialisedTxParts signed
-    pure $ Api.ApiSignedTransaction
-        { transaction = ApiT signed
-        , body = ApiBytesT txBody
-        , witnesses = ApiBytesT <$> txWits
-        }
+   mkApi :: W.SealedTx -> ApiSignedTransaction
+   mkApi tx = Api.ApiSignedTransaction
+       { transaction = ApiT tx
+       , body = ApiBytesT txBody
+       , witnesses = ApiBytesT <$> txWits
+       }
+     where
+       W.SerialisedTxParts txBody txWits = getSerialisedTxParts tx
 
 postTransactionOld
     :: forall ctx s k n.
@@ -2007,6 +2013,7 @@ constructTransaction ctx genChange (ApiT wid) body = do
             & uncurry (W.selectionToUnsignedTx (txWithdrawal txCtx))
 
     withWorkerCtx ctx wid liftE liftE $ \wrk -> do
+        -- fixme: Move this into Cardano.Wallet
         w <- liftHandler $ W.readWalletUTxOIndex @_ @s @k wrk wid
         let getFee = const (selectionDelta TokenBundle.getCoin)
         (sel, sel', fee) <- case (body ^. #payments) of
@@ -2026,6 +2033,7 @@ constructTransaction ctx genChange (ApiT wid) body = do
                 utx <- liftHandler
                     $ W.selectAssets  @_ @s @k wrk w txCtx outs (const Prelude.id)
                 (FeeEstimation estMin _) <- liftHandler $ W.estimateFee $ W.selectAssets @_ @s @k wrk w txCtx outs getFee
+                -- fixme: the fee can be calculated from the selection result
                 sel <- liftHandler $
                     W.assignChangeAddressesWithoutDbUpdate wrk wid genChange utx
                 sel' <- liftHandler
@@ -2034,11 +2042,9 @@ constructTransaction ctx genChange (ApiT wid) body = do
             Just (ApiPaymentAll _) -> do
                 liftHandler $ throwE $ ErrConstructTxNotImplemented "ADP-909"
 
-        tx <- liftHandler
-            $ W.constructTransaction @_ @s @k @n wrk wid txCtx sel
-
+        tx <- liftHandler $ W.constructTransaction @_ @s @k @n wrk wid txCtx sel
         pure $ ApiConstructTransaction
-            { transaction = ApiBytesT tx
+            { transaction = ApiT tx
             , coinSelection = mkApiCoinSelection [] Nothing md sel'
             , fee = Quantity $ fromIntegral fee
             }
@@ -2547,14 +2553,14 @@ getNetworkClock client = liftIO . getNtpStatus client
 -------------------------------------------------------------------------------}
 
 postExternalTransaction
-    :: forall ctx s k b.
+    :: forall ctx s k.
         ( ctx ~ ApiLayer s k
         )
     => ctx
-    -> ApiBytesT b SerialisedTx
+    -> ApiT W.SealedTx
     -> Handler ApiTxId
-postExternalTransaction ctx (ApiBytesT (SerialisedTx bytes)) = do
-    tx <- liftHandler $ W.submitExternalTx @ctx @k ctx bytes
+postExternalTransaction ctx (ApiT sealed) = do
+    tx <- liftHandler $ W.submitExternalTx @ctx @k ctx sealed
     return $ ApiTxId (ApiT (txId tx))
 
 signMetadata
@@ -3270,28 +3276,9 @@ instance IsServerError ErrListUTxOStatistics where
     toServerError = \case
         ErrListUTxOStatisticsNoSuchWallet e -> toServerError e
 
-instance IsServerError ErrMkTx where
-    toServerError = \case
-        ErrKeyNotFoundForAddress addr ->
-            apiError err500 KeyNotFoundForAddress $ mconcat
-                [ "That's embarrassing. I couldn't sign the given transaction: "
-                , "I haven't found the corresponding private key for a known "
-                , "input address I should keep track of: ", showT addr, ". "
-                , "Retrying may work, but something really went wrong..."
-                ]
-        ErrConstructedInvalidTx hint ->
-            apiError err500 CreatedInvalidTransaction hint
-        ErrInvalidEra _era ->
-            apiError err500 CreatedInvalidTransaction $ mconcat
-                [ "Whoops, it seems like I just experienced a hard-fork in the "
-                , "middle of other tasks. This is a pretty rare situation but "
-                , "as a result, I must throw-away what I was doing. Please "
-                , "retry whatever you were doing in a short delay."
-                ]
-
 instance IsServerError ErrSignPayment where
     toServerError = \case
-        ErrSignPaymentMkTx e -> toServerError e
+        ErrSignPaymentSignTx e -> toServerError e
         ErrSignPaymentNoSuchWallet e -> (toServerError e)
             { errHTTPCode = 404
             , errReasonPhrase = errReasonPhrase err404
@@ -3319,16 +3306,21 @@ instance IsServerError ErrWitnessTx where
 
 instance IsServerError ErrSignTx where
     toServerError = \case
-        ErrSignTxKeyNotFoundForAddress addr ->
+        ErrSignTxAddressUnknown txin ->
             apiError err500 KeyNotFoundForAddress $ mconcat
-                [ "That's embarrassing. I couldn't sign the given transaction: "
-                , "I haven't found the corresponding private key for a known "
-                , "input address I should keep track of: ", showT addr, ". "
-                , "Retrying may work, but something really went wrong..."
+                [ "I couldn't sign the given transaction because I "
+                , "could not resolve the address of a transaction input "
+                , "that I should be tracking: ", showT txin, "."
                 ]
-        ErrSignTxInvalidSerializedTx hint ->
+        ErrSignTxKeyNotFound addr ->
+            apiError err500 KeyNotFoundForAddress $ mconcat
+                [ "I couldn't sign the given transaction because I cannot "
+                , "find the private key corresponding to the known "
+                , "input address: ", showT addr, "."
+                ]
+        ErrSignTxBodyError hint ->
             apiError err500 CreatedInvalidTransaction hint
-        ErrSignTxInvalidEra ->
+        ErrSignTxInvalidEra _era ->
             apiError err500 CreatedInvalidTransaction $ mconcat
                 [ "Whoops, it seems like I just experienced a hard-fork in the "
                 , "middle of other tasks. This is a pretty rare situation but "
@@ -3344,7 +3336,7 @@ instance IsServerError ErrConstructTx where
             , "that does not have any payments, withdrawals, delegations, "
             , "metadata nor minting. Include at least one of them."
             ]
-        ErrConstructTxMkTx e -> toServerError e
+        ErrConstructTxSign e -> toServerError e
         ErrConstructTxNoSuchWallet e -> (toServerError e)
             { errHTTPCode = 404
             , errReasonPhrase = errReasonPhrase err404
@@ -3375,24 +3367,7 @@ instance IsServerError ErrDecodeSignedTx where
 
 instance IsServerError ErrSubmitExternalTx where
     toServerError = \case
-        ErrSubmitExternalTxNetwork e -> case e of
-            ErrPostTxBadRequest err ->
-                apiError err500 CreatedInvalidTransaction $ mconcat
-                    [ "That's embarrassing. It looks like I've created an "
-                    , "invalid transaction that could not be parsed by the "
-                    , "node. Here's an error message that may help with "
-                    , "debugging: ", err
-                    ]
-            ErrPostTxProtocolFailure err ->
-                apiError err500 RejectedByCoreNode $ mconcat
-                    [ "I successfully submitted a transaction, but "
-                    , "unfortunately it was rejected by a relay. This could be "
-                    , "because the fee was not large enough, or because the "
-                    , "transaction conflicts with another transaction that "
-                    , "uses one or more of the same inputs, or it may be due "
-                    , "to some other reason. Here's an error message that may "
-                    , "help with debugging: ", err
-                    ]
+        ErrSubmitExternalTxNetwork e -> toServerError e
         ErrSubmitExternalTxDecode e -> (toServerError e)
             { errHTTPCode = 400
             , errReasonPhrase = errReasonPhrase err400
@@ -3414,23 +3389,12 @@ instance IsServerError ErrRemoveTx where
 
 instance IsServerError ErrPostTx where
     toServerError = \case
-        ErrPostTxBadRequest err ->
+        ErrPostTxValidationError err ->
             apiError err500 CreatedInvalidTransaction $ mconcat
-            [ "That's embarrassing. It looks like I've created an "
-            , "invalid transaction that could not be parsed by the "
-            , "node. Here's an error message that may help with "
-            , "debugging: ", err
-            ]
-        ErrPostTxProtocolFailure err ->
-            apiError err500 RejectedByCoreNode $ mconcat
-            [ "I successfully submitted a transaction, but "
-            , "unfortunately it was rejected by a relay. This could be "
-            , "because the fee was not large enough, or because the "
-            , "transaction conflicts with another transaction that "
-            , "uses one or more of the same inputs, or it may be due "
-            , "to some other reason. Here's an error message that may "
-            , "help with debugging: ", err
-            ]
+                [ "The submitted transaction was rejected by the local "
+                , "node. Here's an error message that may help with "
+                , "debugging:\n", err
+                ]
 
 instance IsServerError ErrSubmitTx where
     toServerError = \case
