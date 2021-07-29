@@ -52,6 +52,7 @@ import Prelude
 import Cardano.Wallet.Api.Types
     ( ApiAddressData
     , ApiAddressInspectData
+    , ApiBalanceTransactionPostData
     , ApiBytesT (..)
     , ApiConstructTransactionData
     , ApiMaintenanceActionPostData
@@ -1267,6 +1268,38 @@ instance Malformed (BodyParam ApiSignTransactionPostData) where
                   "extra": "hello"
                }|]
                , "Error in $: parsing Cardano.Wallet.Api.Types.ApiSignTransactionPostData(ApiSignTransactionPostData) failed, unknown fields: ['extra']"
+              )
+            ]
+
+instance Malformed (BodyParam ApiBalanceTransactionPostData) where
+    malformed = jsonValid ++ jsonInvalid
+     where
+         jsonInvalid = first BodyParam <$>
+            [ ("1020344", "Error in $: parsing Cardano.Wallet.Api.Types.ApiBalanceTransactionPostData(ApiBalanceTransactionPostData) failed, expected Object, but encountered Number")
+            , ("\"hello\"", "Error in $: parsing Cardano.Wallet.Api.Types.ApiBalanceTransactionPostData(ApiBalanceTransactionPostData) failed, expected Object, but encountered String")
+            , ("{\"transaction\": \"\", \"random\"}", msgJsonInvalid)
+            , ("{\"transaction\": \"lah\"}", "Error in $.transaction: Parse error. Expecting Base64-encoded format.")
+            , ("{\"transaction\": 1020344}", "Error in $.transaction: parsing 'Base64 ByteString failed, expected String, but encountered Number")
+            , ("{\"transaction\": { \"body\": 1020344 }}", "Error in $.transaction: parsing 'Base64 ByteString failed, expected String, but encountered Object")
+            ]
+         jsonValid = first (BodyParam . Aeson.encode) <$>
+            [
+              ( [aesonQQ|
+                { "transaction": #{validSealedTxHex}
+                }|]
+              , "Error in $.transaction: Parse error. Expecting Base64-encoded format."
+              )
+            , ( [aesonQQ|
+               { "transaction": "cafecafe",
+                  "extra": "hello"
+               }|]
+               , "Error in $: parsing Cardano.Wallet.Api.Types.ApiBalanceTransactionPostData(ApiBalanceTransactionPostData) failed, unknown fields: ['extra']"
+              )
+            , ( [aesonQQ|
+               { "transaction": #{validSealedTxBase64},
+                  "extra": "hello"
+               }|]
+               , "Error in $: parsing Cardano.Wallet.Api.Types.ApiBalanceTransactionPostData(ApiBalanceTransactionPostData) failed, unknown fields: ['extra']"
               )
             ]
 

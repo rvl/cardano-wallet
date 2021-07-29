@@ -68,6 +68,7 @@ module Cardano.Wallet.Api.Server
     , postRandomWallet
     , postRandomWalletFromXPrv
     , signTransaction
+    , balanceTransaction
     , postTransactionOld
     , postTransactionFeeOld
     , postTrezorWallet
@@ -127,6 +128,7 @@ import Cardano.Mnemonic
     ( SomeMnemonic )
 import Cardano.Wallet
     ( ErrAddCosignerKey (..)
+    , ErrBalanceTx (..)
     , ErrCannotJoin (..)
     , ErrCannotQuit (..)
     , ErrConstructSharedWallet (..)
@@ -191,6 +193,7 @@ import Cardano.Wallet.Api.Types
     , ApiActiveSharedWallet (..)
     , ApiAddress (..)
     , ApiAsset (..)
+    , ApiBalanceTransactionPostData
     , ApiBlockInfo (..)
     , ApiBlockReference (..)
     , ApiByronWallet (..)
@@ -202,7 +205,7 @@ import Cardano.Wallet.Api.Types
     , ApiCoinSelectionOutput (..)
     , ApiCoinSelectionWithdrawal (..)
     , ApiConstructTransaction (..)
-    , ApiConstructTransactionData
+    , ApiConstructTransactionData (..)
     , ApiEpochInfo (ApiEpochInfo)
     , ApiEra (..)
     , ApiErrorCode (..)
@@ -1985,6 +1988,47 @@ postTransactionFeeOld ctx (ApiT wid) body = do
         minCoins <- NE.toList <$> liftIO (W.calcMinimumCoinValues @_ @k wrk outs)
         liftHandler $ mkApiFee Nothing minCoins <$> W.estimateFee runSelection
 
+balanceTransaction
+    :: forall ctx s k n.
+        ( ctx ~ ApiLayer s k
+        , IsOwned s k
+        , WalletKey k
+        , Typeable s
+        , Typeable n
+        , HardDerivation k
+        , GenChange s
+        , Bounded (Index (AddressIndexDerivationType k) 'AddressK)
+        )
+    => ctx
+    -> ArgGenChange s
+    -> ApiT WalletId
+    -> ApiBalanceTransactionPostData n
+    -> Handler (ApiConstructTransaction n)
+balanceTransaction ctx genChange (ApiT wid) body = do
+    (tx, _) <- withWorkerCtx ctx wid liftE liftE $ \wrk -> do
+        liftHandler $ W.deciferTx @_ @k wrk (body ^. #transaction . #getApiT . #serialisedTx)
+    constructTransaction ctx genChange (ApiT wid) (toApiConstructTransactionData tx)
+  where
+    toApiConstructTransactionData (Tx _ _ _ outs wdrlM mdM) = ApiConstructTransactionData
+        { payments = toApiPaymentDesination outs
+        , withdrawal = toApiWdrl wdrlM
+        , metadata = ApiT <$> mdM
+        , mint = Nothing
+        , delegations = Nothing
+        , validityInterval = Nothing
+        }
+    toApiWdrl :: Map RewardAccount Coin -> Maybe ApiWithdrawalPostData
+    toApiWdrl _ = Nothing --TODO in the ADP-656
+    toApiPaymentDesination = \case
+        [] -> Nothing
+        txouts -> Just $ ApiPaymentAddresses $ NE.fromList $ toAddressAmount <$> txouts
+    toAddressAmount :: TxOut -> AddressAmount (ApiT Address, Proxy n)
+    toAddressAmount (TxOut addr (TokenBundle coin tokenMap)) = AddressAmount
+        { address = (ApiT addr, Proxy)
+        , amount = Quantity $ fromIntegral (unCoin coin)
+        , assets = ApiT tokenMap
+        }
+
 constructTransaction
     :: forall ctx s k n.
         ( ctx ~ ApiLayer s k
@@ -3377,6 +3421,13 @@ instance IsServerError ErrSubmitExternalTx where
     toServerError = \case
         ErrSubmitExternalTxNetwork e -> toServerError e
         ErrSubmitExternalTxDecode e -> (toServerError e)
+            { errHTTPCode = 400
+            , errReasonPhrase = errReasonPhrase err400
+            }
+
+instance IsServerError ErrBalanceTx where
+    toServerError = \case
+        ErrBalanceTxDecode e -> (toServerError e)
             { errHTTPCode = 400
             , errReasonPhrase = errReasonPhrase err400
             }

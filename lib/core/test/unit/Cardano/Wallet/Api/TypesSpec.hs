@@ -62,6 +62,7 @@ import Cardano.Wallet.Api.Types
     , ApiAddressDataPayload (..)
     , ApiAddressInspect (..)
     , ApiAsset (..)
+    , ApiBalanceTransactionPostData (..)
     , ApiBase64
     , ApiBlockInfo (..)
     , ApiBlockReference (..)
@@ -495,6 +496,7 @@ spec = parallel $ do
             jsonRoundtripAndGolden $ Proxy @(ApiConstructTransaction ('Testnet 0))
             jsonRoundtripAndGolden $ Proxy @ApiMultiDelegationAction
             jsonRoundtripAndGolden $ Proxy @ApiSignTransactionPostData
+            jsonRoundtripAndGolden $ Proxy @ApiBalanceTransactionPostData
             jsonRoundtripAndGolden $ Proxy @ApiSignedTransaction
             jsonRoundtripAndGolden $ Proxy @(PostTransactionOldData ('Testnet 0))
             jsonRoundtripAndGolden $ Proxy @(PostTransactionFeeOldData ('Testnet 0))
@@ -1008,6 +1010,13 @@ spec = parallel $ do
                     { transaction = transaction (x :: ApiSignTransactionPostData)
                     , passphrase = passphrase (x :: ApiSignTransactionPostData)
                     , withdrawal = withdrawal (x :: ApiSignTransactionPostData)
+                    }
+            in
+                x' === x .&&. show x' === show x
+        it "ApiBalanceTransactionPostData" $ property $ \x ->
+            let
+                x' = ApiBalanceTransactionPostData
+                    { transaction = transaction (x :: ApiBalanceTransactionPostData)
                     }
             in
                 x' === x .&&. show x' === show x
@@ -1923,6 +1932,9 @@ instance Arbitrary ApiSignTransactionPostData where
         <*> arbitrary
         <*> arbitrary
 
+instance Arbitrary ApiBalanceTransactionPostData where
+    arbitrary = ApiBalanceTransactionPostData <$> arbitrary
+
 instance Arbitrary (PostTransactionOldData n) where
     arbitrary = PostTransactionOldData
         <$> arbitrary
@@ -2483,6 +2495,9 @@ instance ToSchema ApiTxMetadata where
 
 instance ToSchema ApiSignTransactionPostData where
     declareNamedSchema _ = declareSchemaForDefinition "ApiSignTransactionPostData"
+
+instance ToSchema ApiBalanceTransactionPostData where
+    declareNamedSchema _ = declareSchemaForDefinition "ApiBalanceTransactionPostData"
 
 instance ToSchema ApiSignedTransaction where
     -- fixme: tests don't seem to like allOf

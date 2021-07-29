@@ -117,6 +117,7 @@ module Cardano.Wallet
     , buildAndSignTransaction
     , signTransaction
     , constructTransaction
+    , deciferTx
     , ErrSelectAssets(..)
     , ErrSignPayment (..)
     , ErrWitnessTx (..)
@@ -124,6 +125,7 @@ module Cardano.Wallet
     , ErrWithdrawalNotWorth (..)
     , ErrConstructTx (..)
     , ErrMintBurnAssets (..)
+    , ErrBalanceTx (..)
 
     -- ** Migration
     , createMigrationPlan
@@ -503,6 +505,12 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
+{--
+import Data.ByteArray.Encoding
+    ( Base (..), convertToBase )
+import qualified Data.Text.Encoding as T
+import qualified Debug.Trace as TR
+--}
 
 -- $Development
 -- __Naming Conventions__
@@ -1660,6 +1668,22 @@ constructTransaction ctx wid txCtx sel = do
     tl = ctx ^. transactionLayer @k
     nl = ctx ^. networkLayer
 
+deciferTx
+    :: forall ctx k.
+        ( HasNetworkLayer IO ctx
+        , HasTransactionLayer k ctx
+        )
+    => ctx
+    -> ByteString
+    -> ExceptT ErrBalanceTx IO (Tx, SealedTx)
+deciferTx ctx bytes = do
+    era <- liftIO $ currentNodeEra nw
+    withExceptT ErrBalanceTxDecode $ except $
+        decodeSignedTx tl era bytes
+  where
+    nw = ctx ^. networkLayer
+    tl = ctx ^. transactionLayer @k
+
 -- | Calculate the transaction expiry slot, given a 'TimeInterpreter', and an
 -- optional TTL in seconds.
 --
@@ -2631,6 +2655,11 @@ data ErrSubmitTx
 data ErrSubmitExternalTx
     = ErrSubmitExternalTxNetwork ErrPostTx
     | ErrSubmitExternalTxDecode ErrDecodeSignedTx
+    deriving (Show, Eq)
+
+-- | Errors that can occur when balancing transaction.
+newtype ErrBalanceTx
+    = ErrBalanceTxDecode ErrDecodeSignedTx
     deriving (Show, Eq)
 
 -- | Errors that can occur when trying to change a wallet's passphrase.

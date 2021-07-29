@@ -754,6 +754,29 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
   -- minting
   -- update with sign / submit tx where applicable
   -- end to end join pool and get rewards
+
+    it "TRANS_NEW_BALANCE_01a - Single Output Transaction with input added" $ \ctx -> runResourceT $ do
+        -- constructing source wallet
+        let initialAmt = 10*minUTxOValue
+        wa <- fixtureWalletWith @n ctx [initialAmt]
+
+        -- balancing tx. The below one was generated within
+        -- "TRANS_NEW_CREATE_04a - Single Output Transaction"
+        let serializedTx =
+                "g6QAgYJYILuLKMKshw+fVtm/SBOt30A3OIFkQyqgVGZATSCJkz4+AAGCglg5ASk\
+                \I+0eBpCKvu7iF1Kx76o85LJ8j0sTUfzygXsUTHB3HRwIrQU6iz6UOAyjYiUz4/S\
+                \A361AHbcLlGgAPQkCCWDkBa/q+bfP3jC/CrqPfzKQoL9vkkQmX4auMHzW+5ltV6\
+                \UGP7ox+RMlTTUKqGzs49bSYX4in1FEU6zkaAByEyAIaAAH/uAMZjSeg9g==" :: Text
+        let balancePayload = Json [json|{
+              "transaction": #{serializedTx}
+          }|]
+        rTx <- request @(ApiConstructTransaction n) ctx
+            (Link.balanceTransaction @'Shelley wa) Default balancePayload
+        verify rTx
+            [ expectSuccess
+            , expectResponseCode HTTP.status202
+            , expectField (#coinSelection . #inputs) (`shouldSatisfy` (not . null))
+            ]
   where
     -- Construct a JSON payment request for the given quantity of lovelace.
     mkTxPayload
