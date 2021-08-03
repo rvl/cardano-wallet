@@ -1859,7 +1859,7 @@ postTransactionOld ctx genChange (ApiT wid) body = do
         sel' <- liftHandler
             $ W.assignChangeAddressesAndUpdateDb wrk wid genChange sel
         (tx, txMeta, txTime, sealedTx) <- liftHandler
-            $ W.buildAndSignTransaction @_ @s @k wrk wid mkRwdAcct pwd txCtx sel'
+            $ W.buildAndSignTransaction @_ @s @k @n wrk wid mkRwdAcct pwd txCtx sel'
         liftHandler
             $ W.submitTx @_ @s @k wrk wid (tx, txMeta, sealedTx)
         pure (sel, tx, txMeta, txTime)
@@ -2103,7 +2103,7 @@ joinStakePool ctx knownPools getPoolStatus apiPoolId (ApiT wid) body = do
         sel' <- liftHandler
             $ W.assignChangeAddressesAndUpdateDb wrk wid genChange sel
         (tx, txMeta, txTime, sealedTx) <- liftHandler
-            $ W.buildAndSignTransaction @_ @s @k wrk wid mkRwdAcct pwd txCtx sel'
+            $ W.buildAndSignTransaction @_ @s @k @n wrk wid mkRwdAcct pwd txCtx sel'
         liftHandler
             $ W.submitTx @_ @s @k wrk wid (tx, txMeta, sealedTx)
 
@@ -2188,7 +2188,7 @@ quitStakePool ctx (ApiT wid) body = do
         sel' <- liftHandler
             $ W.assignChangeAddressesAndUpdateDb wrk wid genChange sel
         (tx, txMeta, txTime, sealedTx) <- liftHandler
-            $ W.buildAndSignTransaction @_ @s @k wrk wid mkRwdAcct pwd txCtx sel'
+            $ W.buildAndSignTransaction @_ @s @k @n wrk wid mkRwdAcct pwd txCtx sel'
         liftHandler
             $ W.submitTx @_ @s @k wrk wid (tx, txMeta, sealedTx)
 
@@ -2438,7 +2438,7 @@ migrateWallet ctx withdrawalType (ApiT wid) postData = do
                     , txDelegationAction = Nothing
                     }
             (tx, txMeta, txTime, sealedTx) <- liftHandler $
-                W.buildAndSignTransaction @_ @s @k wrk wid mkRewardAccount pwd
+                W.buildAndSignTransaction @_ @s @k @n wrk wid mkRewardAccount pwd
                     txContext (selection {changeGenerated = []})
             liftHandler $
                 W.submitTx @_ @s @k wrk wid (tx, txMeta, sealedTx)
@@ -3278,6 +3278,7 @@ instance IsServerError ErrListUTxOStatistics where
 
 instance IsServerError ErrSignPayment where
     toServerError = \case
+        ErrSignPaymentConstructTx e -> toServerError e
         ErrSignPaymentSignTx e -> toServerError e
         ErrSignPaymentNoSuchWallet e -> (toServerError e)
             { errHTTPCode = 404
