@@ -57,6 +57,7 @@ import Cardano.Wallet.Primitive.AddressDerivation
     , DerivationIndex (..)
     , DerivationType (..)
     , ErrWrongPassphrase (..)
+    , GetRewardAccount (..)
     , HardDerivation (..)
     , Index
     , Passphrase (..)
@@ -634,10 +635,10 @@ walletKeyIsReencrypted (wid, wname) (xprv, pwd) newPwd =
         selection' <- unsafeRunExceptT $
             W.assignChangeAddressesAndUpdateDb wl wid () selection
         (_,_,_,txOld) <- unsafeRunExceptT $ W.buildAndSignTransaction
-            @_ @_ wl wid credentials (coerce pwd) ctx selection'
+            @_ @_ @_ wl wid credentials (coerce pwd) ctx selection'
         unsafeRunExceptT $ W.updateWalletPassphrase wl wid (coerce pwd, newPwd)
         (_,_,_,txNew) <- unsafeRunExceptT $ W.buildAndSignTransaction
-            @_ @_ wl wid credentials newPwd ctx selection'
+            @_ @_ @_ wl wid credentials newPwd ctx selection'
         txOld `shouldBe` txNew
   where
     selection = SelectionResult
@@ -1289,7 +1290,7 @@ setupFixture (wid, wname, wstate) = do
 -- implements a fake signer that still produces sort of witnesses
 dummyTransactionLayer :: TransactionLayer ShelleyKey
 dummyTransactionLayer = TransactionLayer
-    { mkTransaction = \_era _stakeCredentials keystore _pp _ctx cs -> do
+    { mkTransaction = \_eraPP _stakeCredentials keystore _ctx cs -> do
         let inps' = NE.toList $ second txOutCoin <$> inputsSelected cs
         let tid = mkTxId inps' (outputsCovered cs) mempty Nothing
         let tx = Tx tid Nothing inps' (outputsCovered cs) mempty Nothing
@@ -1456,6 +1457,9 @@ instance IsOurs DummyState Address where
 
 instance IsOurs DummyState RewardAccount where
     isOurs _ s = (Nothing, s)
+
+instance GetRewardAccount DummyState k where
+    getRewardAccount _ = Nothing
 
 instance IsOwned DummyState ShelleyKey where
     isOwned (DummyState m) (rootK, pwd) addr = do
