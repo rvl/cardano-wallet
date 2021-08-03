@@ -135,8 +135,6 @@ import Cardano.Wallet.Transaction
     , addResolvedInputs
     , withdrawalToCoin
     )
-import Control.Monad
-    ( forM )
 import Data.Bifunctor
     ( first )
 import Data.Function
@@ -263,8 +261,8 @@ mkSignedShelleyTransaction
     -- ^ Key store
     -> Cardano.Tx era
     -> Either ErrSignTx (Cardano.Tx era)
-mkSignedShelleyTransaction networkId stakeCreds lookupXPrv tx = do
-    Cardano.makeSignedTransaction <$> wits <*> pure body
+mkSignedShelleyTransaction networkId stakeCreds lookupXPrv tx = Right $
+    Cardano.makeSignedTransaction (mkExtraWits body <> wits) body
   where
     body@(Cardano.TxBody txBodyContent) = Cardano.getTxBody tx
 
@@ -274,23 +272,20 @@ mkSignedShelleyTransaction networkId stakeCreds lookupXPrv tx = do
         [ TxIn (fromShelleyTxId $ Cardano.toShelleyTxId txid) (fromIntegral ix)
         | Cardano.TxIn txid (Cardano.TxIx ix) <- fst <$> Cardano.txIns txBodyContent ]
 
-    -- TODO: this will fail unless all witnesses are found, which is probably
-    -- not what we want.
+    -- TODO: this silently ignores missing witnesses. we should probably return
+    -- information about which signatories were used to create which witnesses.
+    addrCreds = map lookupXPrv selectedInputs
+
     wits = case txWitnessTagFor @k of
-        TxWitnessShelleyUTxO -> do
-            addrWits <- forM selectedInputs $ \txin -> do
-                (k, pwd) <- lookupXPrv txin
-                pure $ mkShelleyWitness body (getRawKey k, pwd)
+        TxWitnessShelleyUTxO ->
+            [ mkShelleyWitness body (getRawKey k, pwd)
+            | Right (k, pwd) <- addrCreds ] ++
+            [ mkShelleyWitness body stakeCred
+            | areWdrls, Just stakeCred <- [stakeCreds] ]
 
-            let wdrlsWits = [mkShelleyWitness body c | areWdrls, Just c <- [stakeCreds]]
-
-            pure $ mkExtraWits body <> F.toList addrWits <> wdrlsWits
-
-        TxWitnessByronUTxO{} -> do
-            bootstrapWits <- forM selectedInputs $ \txin -> do
-                (k, pwd) <- lookupXPrv txin
-                pure $ mkByronWitness body networkId (getRawKey k, pwd)
-            pure $ F.toList bootstrapWits <> mkExtraWits body
+        TxWitnessByronUTxO{} ->
+            [ mkByronWitness body networkId (getRawKey k, pwd)
+            | Right (k, pwd) <- addrCreds ]
 
     mkExtraWits = const mempty
 
