@@ -153,6 +153,7 @@ import Data.Set
     ( Set )
 import Data.Word
     ( Word16, Word64, Word8 )
+import Debug.Trace
 import Fmt
     ( Buildable, pretty )
 import GHC.Stack
@@ -242,10 +243,10 @@ _mkSignedTransaction networkId stakeCreds resolver keyFrom sealed =
     lookupXPrv
         :: TxIn
         -> Either ErrSignTx (k 'AddressK XPrv, Passphrase "encryption")
-    lookupXPrv txin = case resolver txin of
+    lookupXPrv txin = case traceShowId (resolver txin) of
         Just addr -> case keyFrom addr of
-            Just cred -> Right cred
-            Nothing -> Left $ ErrSignTxKeyNotFound addr
+            Just cred -> trace "Right" $ Right cred
+            Nothing -> trace "Left" $ Left $ ErrSignTxKeyNotFound addr
         Nothing -> Left $ ErrSignTxAddressUnknown txin
 
 mkSignedShelleyTransaction
