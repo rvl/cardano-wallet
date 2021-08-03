@@ -74,21 +74,16 @@ import Cardano.Wallet.Shelley.Compatibility
     , fromAlonzoPParams
     , fromCardanoHash
     , fromChainHash
-    , fromNonMyopicMemberRewards
-    , fromPoolDistr
     , fromShelleyCoin
     , fromShelleyPParams
     , fromStakeCredential
     , fromTip
     , fromTip'
-    , getDesirabilities
-    , getOwnerStakes
+    , mkStakePoolsSummary
     , nodeToClientVersions
-    , optimumNumberOfPools
     , slottingParametersFromGenesis
     , toCardanoEra
     , toPoint
-    , toShelleyCoin
     , toStakeCredential
     , unsealShelleyTx
     )
@@ -146,8 +141,6 @@ import Data.Maybe
     ( fromMaybe )
 import Data.Proxy
     ( Proxy (..) )
-import Data.Quantity
-    ( Percentage )
 import Data.Set
     ( Set )
 import Data.Text
@@ -499,79 +492,25 @@ withNetworkLayerBase tr np conn versionData tol action = do
                     SubmitSuccess -> pure ()
                     SubmitFail err -> throwE $ ErrPostTxBadRequest $ T.pack (show err)
 
-
-    _stakeDistribution queue coin = do
-        liftIO $ traceWith tr $ MsgWillQueryRewardsForStake coin
-
-        let mkStakePoolsSummary4 m1 m2 m3 m4 = do
-                (r3, r5) <- m3
-                W.StakePoolsSummary <$> m1 <*> m2 <*> pure r3 <*> m4 <*> pure r5
-        let qry :: LSQ (CardanoBlock StandardCrypto) IO (Maybe W.StakePoolsSummary)
-            qry = mkStakePoolsSummary4
-                <$> getNOpt
-                <*> queryNonMyopicMemberRewards
-                <*> queryRewardsProvenance
-                <*> stakeDistr
+    _stakeDistribution queue = do
+        liftIO $ traceWith tr $ MsgWillQueryRewards
 
         mres <- bracketQuery "stakePoolsSummary" tr $
-            queue `send` (SomeLSQ qry)
+            queue `send` (SomeLSQ qryStakePoolSummary)
         traceWith tr $ MsgFetchStakePoolsData mres
 
-        -- The result will be Nothing if query occurs during the byron era
         case mres of
-            Just res@W.StakePoolsSummary{rewards,stake} -> do
-                liftIO $ traceWith tr $ MsgFetchStakePoolsDataSummary
-                    (Map.size stake)
-                    (Map.size rewards)
-                pure res
-            Nothing -> pure $ W.StakePoolsSummary 0 mempty mempty mempty mempty
+            Just W.StakePoolsSummary{pools} ->
+                traceWith tr $ MsgFetchStakePoolsDataSummary (Map.size pools)
+            Nothing  -> pure () -- we seem to be in the Byron era
+        pure mres
       where
-
-        stakeDistr
-            :: LSQ (CardanoBlock StandardCrypto) IO
-                (Maybe (Map W.PoolId Percentage))
-        stakeDistr = shelleyBased
-            (fromPoolDistr <$> LSQry Shelley.GetStakeDistribution)
-
-        getNOpt :: LSQ (CardanoBlock StandardCrypto) IO (Maybe Int)
-        getNOpt = onAnyEra
-            (pure Nothing)
-            (Just . optimumNumberOfPools <$> LSQry Shelley.GetCurrentPParams)
-            (Just . optimumNumberOfPools <$> LSQry Shelley.GetCurrentPParams)
-            (Just . optimumNumberOfPools <$> LSQry Shelley.GetCurrentPParams)
-            (Just . fromIntegral . Alonzo._nOpt <$> LSQry Shelley.GetCurrentPParams)
-
-        queryRewardsProvenance
-            :: LSQ (CardanoBlock StandardCrypto) IO
-                ( Maybe
-                    ( Map W.PoolId W.StakePoolDesirability
-                    , Map W.PoolId W.Coin
-                    )
-                )
-        queryRewardsProvenance = shelleyBased $ do
-            r <- LSQry Shelley.GetRewardProvenance
-            pure (getDesirabilities r, getOwnerStakes r)
-
-        queryNonMyopicMemberRewards
-            :: LSQ (CardanoBlock StandardCrypto) IO
-                    (Maybe (Map W.PoolId W.Coin))
-        queryNonMyopicMemberRewards = shelleyBased $
-            (getRewardMap . fromNonMyopicMemberRewards)
-                <$> LSQry (Shelley.GetNonMyopicMemberRewards stake)
-          where
-            stake :: Set (Either SL.Coin a)
-            stake = Set.singleton $ Left $ toShelleyCoin coin
-
-            fromJustRewards = fromMaybe
-                (error "stakeDistribution: requested rewards not included in response")
-
-            getRewardMap
-                :: Map
-                    (Either W.Coin W.RewardAccount)
-                    (Map W.PoolId W.Coin)
-                -> Map W.PoolId W.Coin
-            getRewardMap =
-                fromJustRewards . Map.lookup (Left coin)
+        qryStakePoolSummary
+            :: LSQ (CardanoBlock StandardCrypto) IO (Maybe W.StakePoolsSummary)
+        qryStakePoolSummary = shelleyBased $
+            mkStakePoolsSummary
+            <$> LSQry Shelley.GetCurrentPParams
+            <*> LSQry Shelley.GetRewardProvenance
 
     _watchNodeTip readTip cb = do
         observeForever readTip $ \tip -> do
@@ -1209,11 +1148,11 @@ data NetworkLayerLog where
         -> SL.RewardAccounts era
         -> NetworkLayerLog
     MsgDestroyCursor :: ThreadId -> NetworkLayerLog
-    MsgWillQueryRewardsForStake :: W.Coin -> NetworkLayerLog
+    MsgWillQueryRewards :: NetworkLayerLog
     MsgFetchStakePoolsData :: Maybe W.StakePoolsSummary -> NetworkLayerLog
-    MsgFetchStakePoolsDataSummary :: Int -> Int -> NetworkLayerLog
-      -- ^ Number of pools in stake distribution, and rewards map,
-      -- respectively.
+    MsgFetchStakePoolsDataSummary
+        :: Int -- ^ Number of pools in rewards provenance.
+        -> NetworkLayerLog
     MsgWatcherUpdate :: W.BlockHeader -> BracketLog -> NetworkLayerLog
     MsgChainSyncCmd :: (ChainSyncLog Text Text) -> NetworkLayerLog
     MsgInterpreter :: CardanoInterpreter StandardCrypto -> NetworkLayerLog
@@ -1293,16 +1232,14 @@ instance ToText NetworkLayerLog where
             [ "Destroying cursor connection at"
             , T.pack (show threadId)
             ]
-        MsgWillQueryRewardsForStake c ->
-            "Will query non-myopic rewards using the stake " <> pretty c
+        MsgWillQueryRewards ->
+            "Will query pool rewards and stake distribution"
         MsgFetchStakePoolsData d ->
             "Fetched pool data from node tip using LSQ: " <> pretty d
-        MsgFetchStakePoolsDataSummary inStake inRewards -> mconcat
+        MsgFetchStakePoolsDataSummary inRewards -> mconcat
             [ "Fetched pool data from node tip using LSQ. Got "
-            , T.pack (show inStake)
-            , " pools in the stake distribution, and "
             , T.pack (show inRewards)
-            , " pools in the non-myopic member reward map."
+            , " pools in the reward provenance."
             ]
         MsgWatcherUpdate tip b ->
             "Update watcher with tip: " <> pretty tip <>
@@ -1339,7 +1276,7 @@ instance HasSeverityAnnotation NetworkLayerLog where
         MsgLocalStateQueryEraMismatch{}    -> Debug
         MsgAccountDelegationAndRewards{}   -> Debug
         MsgDestroyCursor{}                 -> Debug
-        MsgWillQueryRewardsForStake{}      -> Info
+        MsgWillQueryRewards{}              -> Info
         MsgFetchStakePoolsData{}           -> Debug
         MsgFetchStakePoolsDataSummary{}    -> Info
         MsgWatcherUpdate{}                 -> Debug

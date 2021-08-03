@@ -81,9 +81,8 @@ module Cardano.Wallet.Shelley.Compatibility
       -- ** Stake pools
     , fromPoolId
     , fromPoolDistr
+    , mkStakePoolsSummary
     , fromNonMyopicMemberRewards
-    , getDesirabilities
-    , getOwnerStakes
     , optimumNumberOfPools
     , getProducer
 
@@ -772,27 +771,43 @@ fromNonMyopicMemberRewards =
     . Map.mapKeys (bimap fromShelleyCoin fromStakeCredential)
     . O.unNonMyopicMemberRewards
 
-getDesirabilities
+fromRewardProvenancePool
     :: forall crypto. ()
-    => SL.RewardProvenance crypto
-    -> Map W.PoolId W.StakePoolDesirability
-getDesirabilities =
-    Map.map fromDesirability
-    . Map.mapKeys fromPoolId
-    . SL.desirabilities
-    where
-    fromDesirability (SL.Desirability x y) = W.StakePoolDesirability x y
+    => W.Coin
+    -> SL.RewardProvenancePool crypto
+    -> W.RewardProvenancePool
+fromRewardProvenancePool totalStake SL.RewardProvenancePool{..} =
+  W.RewardProvenancePool
+    { stakeRelative = unsafeMkPercentage sigmaP
+    , ownerPledge = toWalletCoin (SL._poolPledge poolParamsP)
+    , ownerStake = toWalletCoin ownerStakeP
+    , ownerStakeRelative = unsafeMkPercentage
+        $ fromIntegral (SL.unCoin ownerStakeP)
+        / fromIntegral (W.unCoin totalStake)
+    , cost = toWalletCoin (SL._poolCost poolParamsP)
+    , margin = fromUnitInterval (SL._poolMargin poolParamsP)
+    , performanceEstimate = unsafeMkPercentage appPerfP
+    }
 
-getOwnerStakes
-    :: forall crypto. ()
-    => SL.RewardProvenance crypto
-    -> Map W.PoolId W.Coin
-getOwnerStakes =
-    Map.map fromRewardProvenancePool
-    . Map.mapKeys fromPoolId
-    . SL.pools
-    where
-    fromRewardProvenancePool = fromShelleyCoin . SL.ownerStakeP
+mkStakePoolsSummary
+    :: forall era crypto. ()
+    => SLAPI.PParams era
+    -> SL.RewardProvenance crypto
+    -> W.StakePoolsSummary
+mkStakePoolsSummary SL.PParams{_a0,_nOpt} SL.RewardProvenance{totalStake,pools,r}
+  = W.StakePoolsSummary
+    { params = p
+    , pools
+        = Map.map (fromRewardProvenancePool $ toWalletCoin totalStake)
+        $ Map.mapKeys fromPoolId pools
+    }
+  where
+    p = W.RewardParams 
+        { nOpt = fromIntegral _nOpt
+        , a0   = fromNonNegativeInterval _a0
+        , r    = toWalletCoin r
+        , totalStake = toWalletCoin totalStake
+        }
 
 optimumNumberOfPools
     :: HasField "_nOpt" pparams Natural
@@ -1133,6 +1148,9 @@ fromUnitInterval x =
         , "encountered invalid parameter value: "
         , show x
         ]
+
+fromNonNegativeInterval :: SL.NonNegativeInterval -> Rational
+fromNonNegativeInterval = SL.unboundRational
 
 -- | SealedTx are the result of rightfully constructed shelley transactions so, it
 -- is relatively safe to unserialize them from CBOR.
