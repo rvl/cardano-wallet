@@ -187,11 +187,23 @@ import qualified Data.Text.Encoding as T
 spec :: Spec
 spec = do
     describe "decodeSignedTx testing" $ do
-        prop "roundtrip for Shelley witnesses" $
+        prop "roundtrip for Shelley witnesses Shelley" $
             prop_decodeSignedShelleyTxRoundtrip Cardano.ShelleyBasedEraShelley
         prop "roundtrip for Shelley witnesses Allegra" $
             prop_decodeSignedShelleyTxRoundtrip Cardano.ShelleyBasedEraAllegra
-        prop "roundtrip for Byron witnesses" prop_decodeSignedByronTxRoundtrip
+        prop "roundtrip for Shelley witnesses Mary" $
+            prop_decodeSignedShelleyTxRoundtrip Cardano.ShelleyBasedEraMary
+        prop "roundtrip for Shelley witnesses Alonzo" $
+            prop_decodeSignedShelleyTxRoundtrip Cardano.ShelleyBasedEraAlonzo
+
+        prop "roundtrip for Byron witnesses Shelley" $
+            prop_decodeSignedByronTxRoundtrip Cardano.ShelleyBasedEraShelley
+        prop "roundtrip for Byron witnesses Allegra" $
+            prop_decodeSignedByronTxRoundtrip Cardano.ShelleyBasedEraAllegra
+        prop "roundtrip for Byron witnesses Mary" $
+            prop_decodeSignedByronTxRoundtrip Cardano.ShelleyBasedEraMary
+        prop "roundtrip for Byron witnesses Alonzo" $
+            prop_decodeSignedByronTxRoundtrip Cardano.ShelleyBasedEraAlonzo
 
     -- Note:
     --
@@ -643,10 +655,12 @@ prop_decodeSignedShelleyTxRoundtrip shelleyEra (DecodeShelleySetup utxo outs md 
         }
 
 prop_decodeSignedByronTxRoundtrip
-    :: DecodeByronSetup
+    :: forall era. (Cardano.IsCardanoEra era, Cardano.IsShelleyBasedEra era)
+    => Cardano.ShelleyBasedEra era
+    -> DecodeByronSetup
     -> Property
-prop_decodeSignedByronTxRoundtrip (DecodeByronSetup utxo outs slotNo ntwrk pairs) = do
-    let era = Cardano.AnyCardanoEra Cardano.AllegraEra
+prop_decodeSignedByronTxRoundtrip shelleyEra (DecodeByronSetup utxo outs slotNo ntwrk pairs) = do
+    let anyEra = Cardano.anyCardanoEra (Cardano.cardanoEra @era)
     let inps = Map.toList $ getUTxO utxo
     let cs = mkSelection inps
     let fee = selectionDelta txOutCoin cs
@@ -655,10 +669,9 @@ prop_decodeSignedByronTxRoundtrip (DecodeByronSetup utxo outs slotNo ntwrk pairs
     let byronWits = map (mkByronWitness unsigned ntwrk) pairs
     let ledgerTx = Cardano.makeSignedTransaction byronWits unsigned
 
-    sealedTxFromBytes' era (Cardano.serialiseToCBOR ledgerTx)
+    sealedTxFromBytes' anyEra (Cardano.serialiseToCBOR ledgerTx)
         === Right (sealedTxFromCardano' ledgerTx)
   where
-    shelleyEra = Cardano.ShelleyBasedEraAllegra
     mkSelection inps = SelectionResult
         { inputsSelected = NE.fromList inps
         , extraCoinSource = Nothing
