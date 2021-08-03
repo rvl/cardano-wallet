@@ -77,6 +77,7 @@ cradle:
               - -fwarn-unused-binds
               - -fwarn-unused-imports
               - -fwarn-orphans
+              - -fwarn-redundant-constraints
               - -Wno-missing-home-modules
 EOF
 
@@ -103,6 +104,7 @@ make_ghci() {
 :set prompt "λ "
 :set -fwarn-unused-binds
 :set -fwarn-unused-imports
+:set -fwarn-redundant-constraints
 :set -Wno-missing-home-modules
 :set -XOverloadedStrings
 :set -XNoImplicitPrelude
