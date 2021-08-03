@@ -307,6 +307,7 @@ import Cardano.Wallet.Primitive.Model
     , currentTip
     , getState
     , initWallet
+    , totalUTxO
     , updateState
     )
 import Cardano.Wallet.Primitive.Slotting
@@ -382,10 +383,12 @@ import Cardano.Wallet.Primitive.Types.UTxO
 import Cardano.Wallet.Primitive.Types.UTxOIndex
     ( UTxOIndex )
 import Cardano.Wallet.Transaction
-    ( DelegationAction (..)
+    ( DecryptedSigningKey (..)
+    , DelegationAction (..)
     , ErrDecodeSignedTx (..)
     , ErrSelectionCriteria (..)
     , ErrSignTx (..)
+    , SignTransactionKeyStore (..)
     , TransactionCtx (..)
     , TransactionLayer (..)
     , Withdrawal (..)
@@ -549,7 +552,7 @@ data WalletLayer m s (k :: Depth -> Type -> Type)
         (Tracer m WalletWorkerLog)
         (Block, NetworkParameters, SyncTolerance)
         (NetworkLayer m Block)
-        (TransactionLayer k)
+        (TransactionLayer k SealedTx)
         (DBLayer m s k)
     deriving (Generic)
 
@@ -593,7 +596,7 @@ type HasLogger msg = HasType (Tracer IO msg)
 -- hides that choice, for some ease of use.
 type HasNetworkLayer m = HasType (NetworkLayer m Block)
 
-type HasTransactionLayer k = HasType (TransactionLayer k)
+type HasTransactionLayer k = HasType (TransactionLayer k SealedTx)
 
 dbLayer
     :: forall m s k ctx. HasDBLayer m s k ctx
@@ -621,9 +624,9 @@ networkLayer =
 
 transactionLayer
     :: forall k ctx. (HasTransactionLayer k ctx)
-    => Lens' ctx (TransactionLayer k)
+    => Lens' ctx (TransactionLayer k SealedTx)
 transactionLayer =
-    typed @(TransactionLayer k)
+    typed @(TransactionLayer k SealedTx)
 
 {-------------------------------------------------------------------------------
                                    Wallet
@@ -1526,56 +1529,38 @@ signTransaction
     -> SealedTx
     -> ExceptT ErrWitnessTx IO SealedTx
 signTransaction ctx wid mkRwdAcct pwd tx = do
-    rewardAcnt <- withExceptT ErrWitnessTxWithRootKey $
-        makeRewardAccount @ctx @s @k ctx wid mkRwdAcct pwd
-
-    (resolver, keyFrom) <- makeTxInKeyLookup @ctx @s @k ctx wid pwd
-
-    withExceptT ErrWitnessTxSignTx $ ExceptT $ pure $
-        mkSignedTransaction tl (Just rewardAcnt) resolver keyFrom tx
-
+    withKeyStore @ctx @s @k ctx wid (Just . mkRwdAcct) pwd $ \keyStore ->
+        pure $ view #tx $ mkSignedTransaction tl keyStore tx
   where
     tl = ctx ^. transactionLayer @k
-
--- | Uses the wallet root key to load reward account credentials from the
--- database.
-makeRewardAccount
-    :: forall ctx s k.
-        ( HasDBLayer IO s k ctx
-        )
-    => ctx
-    -> WalletId
-    -> ((k 'RootK XPrv, Passphrase "encryption") -> (XPrv, Passphrase "encryption"))
-       -- ^ Reward account derived from the root key (or somewhere else).
-    -> Passphrase "raw"
-    -> ExceptT ErrWithRootKey IO (XPrv, Passphrase "encryption")
-makeRewardAccount ctx wid mkRwdAcct pwd =
-    withRootKey @_ @s ctx wid pwd id $ \xprv scheme ->
-        pure $ mkRwdAcct (xprv, (preparePassphrase scheme pwd))
 
 -- | Uses the wallet's address discovery state and UTxO set to produce a pair of
 -- lookup functions that can convert a 'TxIn' to an address key that can be used
 -- to spend that inupt.
-makeTxInKeyLookup
-    :: forall ctx s k.
+withKeyStore
+    :: forall ctx s k a.
         ( HasDBLayer IO s k ctx
         , IsOwned s k
         )
     => ctx
     -> WalletId
+    -> ((k 'RootK XPrv, Passphrase "encryption") -> Maybe (XPrv, Passphrase "encryption"))
+       -- ^ Reward account derived from the root key (or somewhere else).
     -> Passphrase "raw"
-    -> ExceptT ErrWitnessTx IO (TxIn -> Maybe Address, Address -> Maybe (k 'AddressK XPrv, Passphrase "encryption"))
-makeTxInKeyLookup ctx wid pwd = do
+    -> (SignTransactionKeyStore (k 'AddressK XPrv) -> IO a)
+    -> ExceptT ErrWitnessTx IO a
+withKeyStore ctx wid mkRwdAcct pwd action = do
     (adState, utxo) <- withExceptT ErrWitnessTxNoSuchWallet $ do
         (cp, _, pending) <- readWallet @ctx @s @k ctx wid
-        pure (getState cp, availableUTxO @s pending cp)
+        pure (getState cp, totalUTxO @s pending cp)
 
-    let txInResolver txin = view #address <$> Map.lookup txin (getUTxO utxo)
+    let resolver txin = view #address <$> Map.lookup txin (getUTxO utxo)
 
-    keyStore <- withRootKey @_ @s ctx wid pwd ErrWitnessTxWithRootKey $ \xprv scheme ->
-        pure $ isOwned adState (xprv, preparePassphrase scheme pwd)
-
-    pure (txInResolver, keyStore)
+    withRootKey @_ @s ctx wid pwd ErrWitnessTxWithRootKey $ \xprv scheme -> do
+        let pwdP = preparePassphrase scheme pwd
+        let stakeCreds = uncurry DecryptedSigningKey <$> mkRwdAcct (xprv, pwdP)
+        let keyFrom = fmap (uncurry DecryptedSigningKey) . isOwned adState (xprv, pwdP)
+        liftIO $ action $ SignTransactionKeyStore{stakeCreds,resolver,keyFrom}
 
 -- | Produce witnesses and construct a transaction from a given selection.
 --
@@ -1628,7 +1613,7 @@ getFullTxInfo ctx wid txCtx sel sealed = db & \DBLayer{..} -> do
             readCheckpoint wid
     liftIO $ do
         (time, meta) <- mkTxMeta ti (currentTip cp) (getState cp) txCtx sel
-        pure (decodeSignedTx tl sealed, meta, time, sealed)
+        pure (decodeTx tl sealed, meta, time, sealed)
   where
     db = ctx ^. dbLayer @IO @s @k
     tl = ctx ^. transactionLayer @k
@@ -1784,7 +1769,7 @@ submitExternalTx ctx sealedTx = do
             postTx nw sealedTx
     pure tx
   where
-    tx = decodeSignedTx tl sealedTx
+    tx = decodeTx tl sealedTx
 
     tl = ctx ^. transactionLayer @k
     nw = ctx ^. networkLayer

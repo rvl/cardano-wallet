@@ -1,9 +1,12 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -20,12 +23,21 @@ module Cardano.Wallet.Transaction
     (
     -- * Interface
       TransactionLayer (..)
+    , mkTransaction
     , DelegationAction (..)
     , TransactionCtx (..)
     , defaultTransactionCtx
     , Withdrawal (..)
     , withdrawalToCoin
     , addResolvedInputs
+
+    -- * Keys and Signing
+    , SignTransactionResult (..)
+    , SignTransactionWitness (..)
+    , DecryptedSigningKey (..)
+    , SignTransactionKeyStore (..)
+    , keyStoreLookup
+    , stakeAddressFromKeyStore
 
     -- * Errors
     , ErrSignTx (..)
@@ -39,7 +51,7 @@ module Cardano.Wallet.Transaction
 import Prelude
 
 import Cardano.Address.Derivation
-    ( XPrv, XPub )
+    ( XPrv, XPub, toXPub )
 import Cardano.Api
     ( AnyCardanoEra )
 import Cardano.Wallet.Primitive.AddressDerivation
@@ -59,8 +71,7 @@ import Cardano.Wallet.Primitive.Types.TokenMap
 import Cardano.Wallet.Primitive.Types.TokenQuantity
     ( TokenQuantity )
 import Cardano.Wallet.Primitive.Types.Tx
-    ( SealedTx (..)
-    , TokenBundleSizeAssessor
+    ( TokenBundleSizeAssessor
     , Tx (..)
     , TxConstraints
     , TxIn
@@ -70,39 +81,23 @@ import Cardano.Wallet.Primitive.Types.Tx
     )
 import Cardano.Wallet.Primitive.Types.UTxOIndex
     ( UTxOIndex )
+import Data.Bifunctor
+    ( Bifunctor (..) )
+import Data.Generics.Internal.VL.Lens
+    ( view )
 import Data.List.NonEmpty
     ( NonEmpty )
 import Data.Text
     ( Text )
+import Fmt
+    ( Buildable (..), genericF )
 import GHC.Generics
     ( Generic )
 
 import qualified Data.List.NonEmpty as NE
 
-data TransactionLayer k = TransactionLayer
-    { mkTransaction
-        :: (AnyCardanoEra, ProtocolParameters)
-            -- Era and protocol parameters for which the transaction should be
-            -- created.
-        -> Maybe (XPrv, Passphrase "encryption")
-            -- Reward account
-        -> (Address -> Maybe (k 'AddressK XPrv, Passphrase "encryption"))
-            -- Key store
-        -> TransactionCtx
-            -- An additional context about the transaction
-        -> SelectionResult TxOut
-            -- A balanced coin selection where all change addresses have been
-            -- assigned.
-        -> Either ErrSignTx (Tx, SealedTx)
-        -- ^ Construct a standard transaction
-        --
-        -- " Standard " here refers to the fact that we do not deal with redemption,
-        -- multisignature transactions, etc.
-        --
-        -- This expects as a first argument a mean to compute or lookup private
-        -- key corresponding to a particular address.
-
-    , mkTransactionBody
+data TransactionLayer k tx = TransactionLayer
+    { mkTransactionBody
         :: (AnyCardanoEra, ProtocolParameters)
             -- Era and protocol parameters for which the transaction should be
             -- created.
@@ -113,7 +108,7 @@ data TransactionLayer k = TransactionLayer
         -> SelectionResult TxOut
             -- A balanced coin selection where all change addresses have been
             -- assigned.
-        -> Either ErrSignTx SealedTx
+        -> Either ErrSignTx tx
         -- ^ Construct a standard unsigned transaction
         --
         -- " Standard " here refers to the fact that we do not deal with redemption,
@@ -122,15 +117,11 @@ data TransactionLayer k = TransactionLayer
         -- The function returns CBOR-ed transaction body to be signed in another step.
 
     , mkSignedTransaction
-        :: Maybe (XPrv, Passphrase "encryption")
-            -- Reward account
-        -> (TxIn -> Maybe Address)
-            -- Input resolver
-        -> (Address -> Maybe (k 'AddressK XPrv, Passphrase "encryption"))
+        :: SignTransactionKeyStore (k 'AddressK XPrv)
             -- Key store
-        -> SealedTx
+        -> tx
             -- serialized unsigned transaction
-        -> Either ErrSignTx SealedTx
+        -> SignTransactionResult (k 'AddressK XPrv) () tx
         -- ^ Sign a transaction
 
     , initSelectionCriteria
@@ -165,12 +156,43 @@ data TransactionLayer k = TransactionLayer
         -> TxConstraints
         -- The set of constraints that apply to all transactions.
 
-    , decodeSignedTx
-        :: SealedTx
+    , decodeTx
+        :: tx
         -> Tx
         -- ^ Decode an externally-signed transaction to the chain producer
     }
     deriving Generic
+
+-- | Construct a standard transaction
+--
+-- "Standard" here refers to the fact that we do not deal with redemption,
+-- multisignature transactions, etc.
+--
+-- This expects as a first argument a mean to compute or lookup private
+-- key corresponding to a particular address.
+mkTransaction
+    :: TransactionLayer k tx
+    -> (AnyCardanoEra, ProtocolParameters)
+    -- ^ Era and protocol parameters for which the transaction should be
+    -- created.
+    -> SignTransactionKeyStore (k 'AddressK XPrv)
+    -- ^ Key store
+    -> TransactionCtx
+    -- ^ An additional context about the transaction
+    -> SelectionResult TxOut
+    -- ^ A balanced coin selection where all change addresses have been
+    -- assigned.
+    -> Either ErrSignTx (Tx, tx)
+mkTransaction tl eraPP keyStore ctx cs = do
+    let xpub = stakeAddressFromKeyStore keyStore
+    unsigned <- mkTransactionBody tl eraPP xpub ctx cs
+    let signed = view #tx $ mkSignedTransaction tl keyStore unsigned
+    pure (addResolvedInputs cs (decodeTx tl signed), signed)
+
+-- | Use coin selection to provide resolved inputs of transaction.
+addResolvedInputs :: SelectionResult change -> Tx -> Tx
+addResolvedInputs cs tx = tx
+    { resolvedInputs = fmap txOutCoin <$> NE.toList (inputsSelected cs) }
 
 -- | Some additional context about a transaction. This typically contains
 -- details that are known upfront about the transaction and are used to
@@ -208,14 +230,78 @@ defaultTransactionCtx = TransactionCtx
     , txDelegationAction = Nothing
     }
 
--- | Use coin selection to provide resolved inputs of transaction.
-addResolvedInputs :: SelectionResult change -> Tx -> Tx
-addResolvedInputs cs tx = tx
-    { resolvedInputs = fmap txOutCoin <$> NE.toList (inputsSelected cs) }
-
 -- | Whether the user is attempting any particular delegation action.
 data DelegationAction = RegisterKeyAndJoin PoolId | Join PoolId | Quit
     deriving (Show, Eq, Generic)
+
+data SignTransactionResult sk wit tx = SignTransactionResult
+    { tx :: !tx
+    , addressWitnesses :: ![SignTransactionWitness sk wit]
+    , withdrawalWitnesses :: ![wit]
+    } deriving (Show, Eq, Generic, Functor)
+
+instance Bifunctor (SignTransactionResult sk) where
+    first f (SignTransactionResult t a w) = SignTransactionResult t (fmap (fmap f) a) (fmap f w)
+    second f (SignTransactionResult t a w) = SignTransactionResult (f t) a w
+
+-- | In the wallet, signing keys are symmetrically encrypted at rest using a key
+-- derived from the user's spending passphrasee. This data type pairs an
+-- encrypted signing key with the passphrase needed to decrypt it.
+--
+-- We call this type "decrypted", because although the key is still encrypted, the passphrase is right there, so it may as well be decrypted.
+--
+-- Use 'decryptSigningKey' to actually get the key which can be used for
+-- witnessing transactions.
+data DecryptedSigningKey sk = DecryptedSigningKey
+    { signingKey :: !sk
+    -- ^ Encrypted signing key.
+    , passphrase :: !(Passphrase "encryption")
+    -- ^ The prepared passphrase for decrypting that signing key.
+    } deriving (Show, Eq, Generic, Functor)
+
+-- | Produces signing keys for transaction inputs.
+data SignTransactionKeyStore k = SignTransactionKeyStore
+    { stakeCreds :: Maybe (DecryptedSigningKey XPrv)
+    -- ^ Optional credential for withdrawing from the wallet's reward account.
+    , resolver :: (TxIn -> Maybe Address)
+    -- ^ A function to lookup the output address from a transaction input.
+    , keyFrom :: (Address -> Maybe (DecryptedSigningKey k))
+    -- ^ A function to lookup the vkey/bootstrap credential for an address.
+    } deriving Generic
+
+stakeAddressFromKeyStore :: SignTransactionKeyStore k -> Maybe XPub
+stakeAddressFromKeyStore = fmap (toXPub . signingKey) . stakeCreds
+
+keyStoreLookup
+    :: SignTransactionKeyStore k
+    -> (DecryptedSigningKey k -> Address -> wit)
+    -> TxIn
+    -> SignTransactionWitness k wit
+keyStoreLookup SignTransactionKeyStore{resolver,keyFrom} mkWit txIn =
+    case resolver txIn of
+        address@(Just addr) -> case keyFrom addr of
+            cred@(Just k) -> res {address, cred, witness = Just (mkWit k addr)}
+            Nothing -> res {txIn, address}
+        Nothing -> res
+  where
+    res = SignTransactionWitness
+        { txIn, address = Nothing, cred = Nothing, witness = Nothing }
+
+data SignTransactionWitness sk wit = SignTransactionWitness
+    { txIn :: TxIn
+    , address :: Maybe Address
+    , cred :: !(Maybe (DecryptedSigningKey sk))
+    , witness :: !(Maybe wit)
+    } deriving (Show, Eq, Generic, Functor)
+
+instance (Buildable wit, Buildable tx) => Buildable (SignTransactionResult sk wit tx) where
+    build = genericF
+
+instance Buildable wit => Buildable (SignTransactionWitness sk wit) where
+    build = genericF
+
+instance Buildable (DecryptedSigningKey sk) where
+    build _ = "<protected>"
 
 -- | Indicates a problem with the selection criteria for a coin selection.
 data ErrSelectionCriteria

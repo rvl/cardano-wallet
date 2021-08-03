@@ -2539,7 +2539,7 @@ getNetworkInformation st nl = liftIO $ do
 getNetworkParameters
     :: (Block, NetworkParameters, SyncTolerance)
     -> NetworkLayer IO Block
-    -> TransactionLayer k
+    -> TransactionLayer k W.SealedTx
     -> Handler ApiNetworkParameters
 getNetworkParameters (_block0, genesisNp, _st) nl tl = do
     pp <- liftIO $ NW.currentProtocolParameters nl
@@ -3017,7 +3017,7 @@ newApiLayer
     => Tracer IO WalletEngineLog
     -> (Block, NetworkParameters, SyncTolerance)
     -> NetworkLayer IO Block
-    -> TransactionLayer k
+    -> TransactionLayer k W.SealedTx
     -> DBFactory IO s k
     -> TokenMetadataClient IO
     -> (WorkerCtx ctx -> WalletId -> IO ())
