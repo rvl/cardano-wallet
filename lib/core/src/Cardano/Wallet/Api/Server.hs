@@ -440,7 +440,7 @@ import Cardano.Wallet.Transaction
     , ErrOutputTokenQuantityExceedsLimit (..)
     , ErrSelectionCriteria (..)
     , TransactionCtx (..)
-    , TransactionLayer
+    , TransactionLayer (..)
     , Withdrawal (..)
     , defaultTransactionCtx
     )
@@ -2004,10 +2004,9 @@ balanceTransaction
     -> ApiT WalletId
     -> ApiBalanceTransactionPostData n
     -> Handler (ApiConstructTransaction n)
-balanceTransaction ctx genChange (ApiT wid) body = do
-    (tx, _) <- withWorkerCtx ctx wid liftE liftE $ \wrk -> do
-        liftHandler $ W.deciferTx @_ @k wrk (body ^. #transaction . #getApiT . #serialisedTx)
-    constructTransaction ctx genChange (ApiT wid) (toApiConstructTransactionData tx)
+balanceTransaction ctx genChange (ApiT wid) body =
+    constructTransaction ctx genChange (ApiT wid) $
+        toApiConstructTransactionData tx
   where
     toApiConstructTransactionData (Tx _ _ _ outs wdrlM mdM) = ApiConstructTransactionData
         { payments = toApiPaymentDesination outs
@@ -2028,6 +2027,9 @@ balanceTransaction ctx genChange (ApiT wid) body = do
         , amount = Quantity $ fromIntegral (unCoin coin)
         , assets = ApiT tokenMap
         }
+
+    tx = decodeSignedTx tl (body ^. #transaction . #getApiT . #serialisedTx)
+    tl = ctx ^. W.transactionLayer @k
 
 constructTransaction
     :: forall ctx s k n.

@@ -117,7 +117,6 @@ module Cardano.Wallet
     , buildAndSignTransaction
     , signTransaction
     , constructTransaction
-    , deciferTx
     , ErrSelectAssets(..)
     , ErrSignPayment (..)
     , ErrWitnessTx (..)
@@ -1667,22 +1666,6 @@ constructTransaction ctx wid txCtx sel = do
   where
     tl = ctx ^. transactionLayer @k
     nl = ctx ^. networkLayer
-
-deciferTx
-    :: forall ctx k.
-        ( HasNetworkLayer IO ctx
-        , HasTransactionLayer k ctx
-        )
-    => ctx
-    -> ByteString
-    -> ExceptT ErrBalanceTx IO (Tx, SealedTx)
-deciferTx ctx bytes = do
-    era <- liftIO $ currentNodeEra nw
-    withExceptT ErrBalanceTxDecode $ except $
-        decodeSignedTx tl era bytes
-  where
-    nw = ctx ^. networkLayer
-    tl = ctx ^. transactionLayer @k
 
 -- | Calculate the transaction expiry slot, given a 'TimeInterpreter', and an
 -- optional TTL in seconds.
