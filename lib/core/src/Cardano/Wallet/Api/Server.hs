@@ -1989,7 +1989,7 @@ postTransactionFeeOld ctx (ApiT wid) body = do
         liftHandler $ mkApiFee Nothing minCoins <$> W.estimateFee runSelection
 
 balanceTransaction
-    :: forall ctx s k n.
+    :: forall ctx s k (n :: NetworkDiscriminant).
         ( ctx ~ ApiLayer s k
         , IsOwned s k
         , WalletKey k
@@ -1999,12 +1999,13 @@ balanceTransaction
         , GenChange s
         , Bounded (Index (AddressIndexDerivationType k) 'AddressK)
         )
-    => ctx
+    => Proxy n
+    -> ctx
     -> ArgGenChange s
     -> ApiT WalletId
     -> ApiBalanceTransactionPostData n
     -> Handler (ApiConstructTransaction n)
-balanceTransaction ctx genChange (ApiT wid) body =
+balanceTransaction _ ctx genChange (ApiT wid) body =
     constructTransaction ctx genChange (ApiT wid) $
         toApiConstructTransactionData tx
   where
@@ -2028,7 +2029,7 @@ balanceTransaction ctx genChange (ApiT wid) body =
         , assets = ApiT tokenMap
         }
 
-    tx = decodeSignedTx tl (body ^. #transaction . #getApiT . #serialisedTx)
+    tx = decodeSignedTx tl (body ^. #transaction . #getApiT)
     tl = ctx ^. W.transactionLayer @k
 
 constructTransaction

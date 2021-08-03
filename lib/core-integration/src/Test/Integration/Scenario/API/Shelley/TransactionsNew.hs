@@ -757,7 +757,7 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
 
     it "TRANS_NEW_BALANCE_01a - Single Output Transaction with input added" $ \ctx -> runResourceT $ do
         -- constructing source wallet
-        let initialAmt = 10*minUTxOValue
+        let initialAmt = 10*minUTxOValue (_mainEra ctx)
         wa <- fixtureWalletWith @n ctx [initialAmt]
 
         -- balancing tx. The below one was generated within

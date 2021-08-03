@@ -387,8 +387,6 @@ import Data.List.NonEmpty
     ( NonEmpty (..) )
 import Data.Map.Strict
     ( Map )
-import Data.Maybe
-    ( isJust )
 import Data.Proxy
     ( Proxy (..) )
 import Data.Quantity
@@ -2634,6 +2632,11 @@ instance FromJSON ApiSignTransactionPostData where
 instance ToJSON ApiSignTransactionPostData where
     toJSON = genericToJSON strictRecordTypeOptions
 
+instance FromJSON (ApiT (Hash "Datum")) where
+    parseJSON = fromTextJSON "Datum"
+instance ToJSON (ApiT (Hash "Datum")) where
+    toJSON = toTextJSON
+
 instance FromJSON ApiTxIn where
     parseJSON = withText "ApiTxIn" $ \txt -> do
         let (txidTxt, rest) = T.breakOn "#" txt
@@ -2648,14 +2651,15 @@ instance ToJSON ApiTxIn where
     toJSON (ApiTxIn hash ix) = String $
         toText (getApiT hash) <> "#" <> toText (show ix)
 
-instance FromJSON (ApiTxOut n) where
+instance DecodeAddress n => FromJSON (ApiTxOut n) where
     parseJSON = withObject "ApiTxOut" $ \o -> do
         addr <- o .: "address"
         datum <- o .:? "data"
         amtsWithTokens <- parseValue <$> o .: "value"
-        let split (Just amt, Nothing) (acc1, acc2) = (amt:acc1, acc2)
-            split (Nothing, Just tokensPerPolicy) (acc1, acc2) = (acc1, tokensPerPolicy:acc2)
-        let (amts, tokens) = foldr split ([],[]) amtsWithTokens
+        let splitV (Just amt, Nothing) (acc1, acc2) = (amt:acc1, acc2)
+            splitV (Nothing, Just tokensPerPolicy) (acc1, acc2) = (acc1, tokensPerPolicy:acc2)
+            splitV _ _ = error "parseValue should either return ada or token"
+        (amts, tokens) <- foldr splitV ([],[]) <$> amtsWithTokens
         let tokensGathered = ApiT $ fromNestedList tokens
         case (datum, amts) of
             (Nothing, [amt]) ->
@@ -2682,10 +2686,10 @@ instance FromJSON (ApiTxOut n) where
                let processTokensPerPolicyId o =
                        case HM.toList o of
                            [] -> fail "tokens should not be empty"
-                           cs -> for (reverse cs) $ \(tName, tQuantity) -> do
+                           cs -> for (reverse cs) $ \(tNameTxt, tQuantity) -> do
                                q <- parseJSON tQuantity
-                               tName <- parseJSON (String tName)
-                               pure (tName, TokenQuantity q)
+                               tokenName <- parseJSON (String tNameTxt)
+                               pure (tokenName, TokenQuantity q)
                tokenPolicy <- parseJSON (String numTxt)
                tokenPairs <- withObject "Tokens with given policyId" processTokensPerPolicyId obj
                pure (Nothing, Just (tokenPolicy, NE.fromList tokenPairs))
@@ -2693,7 +2697,7 @@ instance FromJSON (ApiTxOut n) where
 instance EncodeAddress n => ToJSON (ApiTxOut n) where
     toJSON (ApiTxOut addr data' (Quantity amt) (ApiT assets')) = case data' of
         Nothing -> object objShared
-        Just _content ->  object objShared
+        Just content ->  object (objShared ++ ["data" .= toJSON content])
       where
         objShared =
             [ "address" .= toJSON addr
@@ -2705,7 +2709,7 @@ instance EncodeAddress n => ToJSON (ApiTxOut n) where
             [ toText policyId .= object (concatMap tokenPair (NE.toList $ NEMap.toList tokens')) ]
         tokens = Map.foldrWithKey addEntry [] $ toNestedMap assets'
 
-instance FromJSON (ApiExternalInput n) where
+instance DecodeAddress n => FromJSON (ApiExternalInput n) where
     parseJSON = withObject "ApiExternalInput" $ \o -> do
         txInVal <- o .: "txIn"
         txOutVal <- o .: "txOut"
@@ -2715,7 +2719,7 @@ instance EncodeAddress n => ToJSON (ApiExternalInput n) where
         [ "txIn" .= toJSON ins
         , "txOut" .= toJSON outs ]
 
-instance FromJSON (ApiBalanceTransactionPostData n) where
+instance DecodeAddress n => FromJSON (ApiBalanceTransactionPostData n) where
     parseJSON = withObject "ApiBalanceTransactionPostData" $ \o -> do
         cbor <- o .: "transaction" >>= (\trObj -> trObj .: "cborHex")
         sealedTx <- parseSealedTxBytes @'Base16 cbor
