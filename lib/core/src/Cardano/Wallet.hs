@@ -307,6 +307,7 @@ import Cardano.Wallet.Primitive.Model
     , currentTip
     , getState
     , initWallet
+    , totalUTxO
     , updateState
     )
 import Cardano.Wallet.Primitive.Slotting
@@ -1529,10 +1530,10 @@ signTransaction ctx wid mkRwdAcct pwd tx = do
     rewardAcnt <- withExceptT ErrWitnessTxWithRootKey $
         makeRewardAccount @ctx @s @k ctx wid mkRwdAcct pwd
 
-    (resolver, keyFrom) <- makeTxInKeyLookup @ctx @s @k ctx wid pwd
+    res <- withKeyStore @ctx @s @k ctx wid pwd $ \resolver keyFrom ->
+        pure $ mkSignedTransaction tl (Just rewardAcnt) resolver keyFrom tx
 
-    withExceptT ErrWitnessTxSignTx $ ExceptT $ pure $
-        mkSignedTransaction tl (Just rewardAcnt) resolver keyFrom tx
+    either (throwE . ErrWitnessTxSignTx) pure res
 
   where
     tl = ctx ^. transactionLayer @k
@@ -1556,26 +1557,26 @@ makeRewardAccount ctx wid mkRwdAcct pwd =
 -- | Uses the wallet's address discovery state and UTxO set to produce a pair of
 -- lookup functions that can convert a 'TxIn' to an address key that can be used
 -- to spend that inupt.
-makeTxInKeyLookup
-    :: forall ctx s k.
+withKeyStore
+    :: forall ctx s k a.
         ( HasDBLayer IO s k ctx
         , IsOwned s k
         )
     => ctx
     -> WalletId
     -> Passphrase "raw"
-    -> ExceptT ErrWitnessTx IO (TxIn -> Maybe Address, Address -> Maybe (k 'AddressK XPrv, Passphrase "encryption"))
-makeTxInKeyLookup ctx wid pwd = do
+    -> ((TxIn -> Maybe Address) -> (Address -> Maybe (k 'AddressK XPrv, Passphrase "encryption")) -> IO a)
+    -> ExceptT ErrWitnessTx IO a
+withKeyStore ctx wid pwd action = do
     (adState, utxo) <- withExceptT ErrWitnessTxNoSuchWallet $ do
         (cp, _, pending) <- readWallet @ctx @s @k ctx wid
-        pure (getState cp, availableUTxO @s pending cp)
+        pure (getState cp, totalUTxO @s pending cp)
 
     let txInResolver txin = view #address <$> Map.lookup txin (getUTxO utxo)
 
-    keyStore <- withRootKey @_ @s ctx wid pwd ErrWitnessTxWithRootKey $ \xprv scheme ->
-        pure $ isOwned adState (xprv, preparePassphrase scheme pwd)
-
-    pure (txInResolver, keyStore)
+    withRootKey @_ @s ctx wid pwd ErrWitnessTxWithRootKey $ \xprv scheme -> do
+        let keyStore = isOwned adState (xprv, preparePassphrase scheme pwd)
+        liftIO $ action txInResolver keyStore
 
 -- | Produce witnesses and construct a transaction from a given selection.
 --
