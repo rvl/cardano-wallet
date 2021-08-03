@@ -290,6 +290,7 @@ import Cardano.Wallet.Primitive.AddressDerivation
     , Depth (..)
     , DerivationIndex (..)
     , DerivationType (..)
+    , GetRewardAccount
     , HardDerivation (..)
     , Index (..)
     , MkKeyFingerprint
@@ -711,9 +712,9 @@ postWallet
         , HasDBFactory s k ctx
         , HasWorkerRegistry s k ctx
         , IsOurs s RewardAccount
-        , Typeable s
         , Typeable n
         , (k == SharedKey) ~ 'False
+        , GetRewardAccount s k
         )
     => ctx
     -> ((SomeMnemonic, Maybe SomeMnemonic) -> Passphrase "encryption" -> k 'RootK XPrv)
@@ -725,7 +726,7 @@ postWallet ctx generateKey liftKey (WalletOrAccountPostData body) = case body of
         postShelleyWallet ctx generateKey body'
     Right body' ->
         postAccountWallet ctx mkShelleyWallet liftKey
-            (W.manageRewardBalance @_ @s @k (Proxy @n)) body'
+            (W.manageRewardBalance @_ @s @k) body'
 
 postShelleyWallet
     :: forall ctx s k n.
@@ -735,11 +736,11 @@ postShelleyWallet
         , MkKeyFingerprint k (Proxy n, k 'AddressK XPub)
         , MkKeyFingerprint k Address
         , WalletKey k
+        , GetRewardAccount s k
         , Bounded (Index (AddressIndexDerivationType k) 'AddressK)
         , HasDBFactory s k ctx
         , HasWorkerRegistry s k ctx
         , IsOurs s RewardAccount
-        , Typeable s
         , Typeable n
         , (k == SharedKey) ~ 'False
         )
@@ -751,7 +752,7 @@ postShelleyWallet ctx generateKey body = do
     let state = mkSeqStateFromRootXPrv (rootXPrv, pwd) purposeCIP1852 g
     void $ liftHandler $ createWalletWorker @_ @s @k ctx wid
         (\wrk -> W.createWallet @(WorkerCtx ctx) @_ @s @k wrk wid wName state)
-        (\wrk _ -> W.manageRewardBalance @(WorkerCtx ctx) @s @k (Proxy @n) wrk wid)
+        (\wrk _ -> W.manageRewardBalance @(WorkerCtx ctx) @s @k wrk wid)
     withWorkerCtx @_ @s @k ctx wid liftE liftE $ \wrk -> liftHandler $
         W.attachPrivateKeyFromPwd @_ @s @k wrk wid (rootXPrv, pwd)
     fst <$> getWallet ctx (mkShelleyWallet @_ @s @k) (ApiT wid)
@@ -1517,6 +1518,7 @@ selectCoins
         , Typeable n
         , Typeable s
         , WalletKey k
+        , GetRewardAccount s k
         )
     => ctx
     -> ArgGenChange s
@@ -1550,8 +1552,9 @@ selectCoinsForJoin
         , DelegationAddress n k
         , MkKeyFingerprint k (Proxy n, k 'AddressK XPub)
         , SoftDerivation k
+        , WalletKey k
+        , GetRewardAccount s k
         , Typeable n
-        , Typeable s
         )
     => ctx
     -> IO (Set PoolId)
@@ -1581,7 +1584,7 @@ selectCoinsForJoin ctx knownPools getPoolStatus pid wid = do
         utx <- liftHandler
             $ W.selectAssetsNoOutputs @_ @s @k wrk wid wal txCtx transform
         (_, _, path) <- liftHandler
-            $ W.readRewardAccount @_ @s @k @n wrk wid
+            $ W.readRewardAccount @_ @s @k wrk wid
 
         let deposits = maybeToList deposit
 
@@ -1595,7 +1598,8 @@ selectCoinsForQuit
         , MkKeyFingerprint k (Proxy n, k 'AddressK XPub)
         , SoftDerivation k
         , Typeable n
-        , Typeable s
+        , WalletKey k
+        , GetRewardAccount s k
         )
     => ctx
     -> ApiT WalletId
@@ -1614,7 +1618,7 @@ selectCoinsForQuit ctx (ApiT wid) = do
         wal <- liftHandler $ W.readWalletUTxOIndex @_ @s @k wrk wid
         utx <- liftHandler
             $ W.selectAssetsNoOutputs @_ @s @k wrk wid wal txCtx transform
-        (_, _, path) <- liftHandler $ W.readRewardAccount @_ @s @k @n wrk wid
+        (_, _, path) <- liftHandler $ W.readRewardAccount @_ @s @k wrk wid
 
         pure $ mkApiCoinSelection [] (Just (action, path)) Nothing utx
 
@@ -1789,6 +1793,7 @@ signTransaction
         , HardDerivation k
         , Bounded (Index (AddressIndexDerivationType k) 'AddressK)
         , WalletKey k
+        , GetRewardAccount s k
         , Typeable n
         , Typeable s
         )
@@ -1830,6 +1835,7 @@ postTransactionOld
         , Typeable n
         , Typeable s
         , WalletKey k
+        , GetRewardAccount s k
         )
     => ctx
     -> ArgGenChange s
@@ -1859,7 +1865,7 @@ postTransactionOld ctx genChange (ApiT wid) body = do
         sel' <- liftHandler
             $ W.assignChangeAddressesAndUpdateDb wrk wid genChange sel
         (tx, txMeta, txTime, sealedTx) <- liftHandler
-            $ W.buildAndSignTransaction @_ @s @k @n wrk wid mkRwdAcct pwd txCtx sel'
+            $ W.buildAndSignTransaction @_ @s @k wrk wid mkRwdAcct pwd txCtx sel'
         liftHandler
             $ W.submitTx @_ @s @k wrk wid (tx, txMeta, sealedTx)
         pure (sel, tx, txMeta, txTime)
@@ -1949,6 +1955,7 @@ postTransactionFeeOld
         , Typeable n
         , Typeable s
         , WalletKey k
+        , GetRewardAccount s k
         )
     => ctx
     -> ApiT WalletId
@@ -1979,6 +1986,7 @@ constructTransaction
         , Typeable n
         , Typeable s
         , WalletKey k
+        , GetRewardAccount s k
         )
     => ctx
     -> ArgGenChange s
@@ -2042,7 +2050,7 @@ constructTransaction ctx genChange (ApiT wid) body = do
             Just (ApiPaymentAll _) -> do
                 liftHandler $ throwE $ ErrConstructTxNotImplemented "ADP-909"
 
-        tx <- liftHandler $ W.constructTransaction @_ @s @k @n wrk wid txCtx sel
+        tx <- liftHandler $ W.constructTransaction @_ @s @k wrk wid txCtx sel
         pure $ ApiConstructTransaction
             { transaction = ApiT tx
             , coinSelection = mkApiCoinSelection [] Nothing md sel'
@@ -2064,6 +2072,7 @@ joinStakePool
         , Typeable n
         , Typeable s
         , WalletKey k
+        , GetRewardAccount s k
         )
     => ctx
     -> IO (Set PoolId)
@@ -2103,7 +2112,7 @@ joinStakePool ctx knownPools getPoolStatus apiPoolId (ApiT wid) body = do
         sel' <- liftHandler
             $ W.assignChangeAddressesAndUpdateDb wrk wid genChange sel
         (tx, txMeta, txTime, sealedTx) <- liftHandler
-            $ W.buildAndSignTransaction @_ @s @k @n wrk wid mkRwdAcct pwd txCtx sel'
+            $ W.buildAndSignTransaction @_ @s @k wrk wid mkRwdAcct pwd txCtx sel'
         liftHandler
             $ W.submitTx @_ @s @k wrk wid (tx, txMeta, sealedTx)
 
@@ -2161,6 +2170,7 @@ quitStakePool
         , Typeable n
         , Typeable s
         , WalletKey k
+        , GetRewardAccount s k
         )
     => ctx
     -> ApiT WalletId
@@ -2188,7 +2198,7 @@ quitStakePool ctx (ApiT wid) body = do
         sel' <- liftHandler
             $ W.assignChangeAddressesAndUpdateDb wrk wid genChange sel
         (tx, txMeta, txTime, sealedTx) <- liftHandler
-            $ W.buildAndSignTransaction @_ @s @k @n wrk wid mkRwdAcct pwd txCtx sel'
+            $ W.buildAndSignTransaction @_ @s @k wrk wid mkRwdAcct pwd txCtx sel'
         liftHandler
             $ W.submitTx @_ @s @k wrk wid (tx, txMeta, sealedTx)
 
@@ -2279,8 +2289,8 @@ listStakeKeys
         ( ctx ~ ApiLayer s k
         , s ~ SeqState n k
         , HasNetworkLayer IO ctx
-        , Typeable n
-        , Typeable s
+        , WalletKey k
+        , GetRewardAccount s k
         )
     => (Address -> Maybe RewardAccount)
     -> ctx
@@ -2293,7 +2303,7 @@ listStakeKeys lookupStakeRef ctx (ApiT wid) = do
 
             let takeFst (a,_,_) = a
             mourAccount <- fmap (fmap takeFst . eitherToMaybe)
-                <$> liftIO . runExceptT $ W.readRewardAccount @_ @s @k @n wrk wid
+                <$> liftIO . runExceptT $ W.readRewardAccount @_ @s @k wrk wid
             ourApiDelegation <- liftIO $ toApiWalletDelegation (meta ^. #delegation)
                 (unsafeExtendSafeZone (timeInterpreter $ ctx ^. networkLayer))
             let ourKeys = case mourAccount of
@@ -2321,6 +2331,7 @@ createMigrationPlan
         , Typeable n
         , Typeable s
         , WalletKey k
+        , GetRewardAccount s k
         )
     => ctx
     -> Maybe ApiWithdrawalPostData
@@ -2414,6 +2425,7 @@ migrateWallet
         , Typeable n
         , Typeable s
         , WalletKey k
+        , GetRewardAccount s k
         )
     => ctx
     -> Maybe ApiWithdrawalPostData
@@ -2438,7 +2450,7 @@ migrateWallet ctx withdrawalType (ApiT wid) postData = do
                     , txDelegationAction = Nothing
                     }
             (tx, txMeta, txTime, sealedTx) <- liftHandler $
-                W.buildAndSignTransaction @_ @s @k @n wrk wid mkRewardAccount pwd
+                W.buildAndSignTransaction @_ @s @k wrk wid mkRewardAccount pwd
                     txContext (selection {changeGenerated = []})
             liftHandler $
                 W.submitTx @_ @s @k wrk wid (tx, txMeta, sealedTx)
@@ -2697,6 +2709,7 @@ mkRewardAccountBuilder
         , WalletKey k
         , Typeable s
         , Typeable n
+        , GetRewardAccount s k
         )
     => ctx
     -> WalletId
@@ -2715,7 +2728,7 @@ mkRewardAccountBuilder ctx wid withdrawal = do
                 pure (NoWithdrawal, selfRewardCredentials)
 
             (Just Refl, Just SelfWithdrawal) -> do
-                (acct, _, path) <- liftHandler $ W.readRewardAccount @_ @s @k @n wrk wid
+                (acct, _, path) <- liftHandler $ W.readRewardAccount @_ @s @k wrk wid
                 wdrl <- liftHandler $ W.queryRewardBalance @_ wrk acct
                 (, selfRewardCredentials) . WithdrawalSelf acct path
                     <$> liftIO (W.readNextWithdrawal @_ @k wrk wdrl)

@@ -283,7 +283,7 @@ serveWallet
                 icarusApi  <- apiLayer (newTransactionLayer net) nl
                     Server.idleWorker
                 shelleyApi <- apiLayer (newTransactionLayer net) nl
-                    (Server.manageRewardBalance proxy)
+                    Server.manageRewardBalance
 
                 let txLayerUdefined = error "TO-DO in ADP-686"
                 multisigApi <- apiLayer txLayerUdefined nl

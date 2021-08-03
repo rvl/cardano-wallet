@@ -60,6 +60,7 @@ import Cardano.Wallet.Primitive.AddressDerivation
     , Depth (..)
     , DerivationIndex (..)
     , DerivationType (..)
+    , GetRewardAccount (..)
     , HardDerivation (..)
     , Index (..)
     , KeyFingerprint (..)
@@ -77,6 +78,7 @@ import Cardano.Wallet.Primitive.AddressDerivation
     , fromHex
     , hex
     , mutableAccount
+    , stakeDerivationPath
     )
 import Cardano.Wallet.Primitive.AddressDiscovery
     ( GetPurpose (..), IsOurs (..) )
@@ -398,6 +400,13 @@ instance ToRewardAccount ShelleyKey where
 
 toRewardAccountRaw :: XPub -> RewardAccount
 toRewardAccountRaw = RewardAccount . blake2b224 . xpubPublicKey
+
+instance GetRewardAccount (SeqState n ShelleyKey) ShelleyKey where
+    getRewardAccount s = Just (k, acct, path)
+      where
+          k = rewardAccountKey s
+          acct = toRewardAccount k
+          path = stakeDerivationPath $ derivationPrefix s
 
 {-------------------------------------------------------------------------------
                           Storing and retrieving keys

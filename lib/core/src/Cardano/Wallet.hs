@@ -237,10 +237,10 @@ import Cardano.Wallet.Primitive.AddressDerivation
     , DerivationPrefix (..)
     , DerivationType (..)
     , ErrWrongPassphrase (..)
+    , GetRewardAccount (..)
     , HardDerivation (..)
     , Index (..)
     , MkKeyFingerprint (..)
-    , NetworkDiscriminant (..)
     , Passphrase
     , PaymentAddress (..)
     , Role (..)
@@ -251,7 +251,6 @@ import Cardano.Wallet.Primitive.AddressDerivation
     , encryptPassphrase
     , liftIndex
     , preparePassphrase
-    , stakeDerivationPath
     )
 import Cardano.Wallet.Primitive.AddressDerivation.Byron
     ( ByronKey )
@@ -260,7 +259,7 @@ import Cardano.Wallet.Primitive.AddressDerivation.Icarus
 import Cardano.Wallet.Primitive.AddressDerivation.SharedKey
     ( SharedKey (..) )
 import Cardano.Wallet.Primitive.AddressDerivation.Shelley
-    ( ShelleyKey, deriveAccountPrivateKeyShelley )
+    ( deriveAccountPrivateKeyShelley )
 import Cardano.Wallet.Primitive.AddressDiscovery
     ( CompareDiscovery (..)
     , GenChange (..)
@@ -464,8 +463,6 @@ import Data.Text.Class
     ( ToText (..) )
 import Data.Time.Clock
     ( NominalDiffTime, UTCTime )
-import Data.Type.Equality
-    ( (:~:) (..), testEquality )
 import Data.Void
     ( Void )
 import Data.Word
@@ -479,7 +476,7 @@ import Safe
 import Statistics.Quantile
     ( medianUnbiased, quantiles )
 import Type.Reflection
-    ( Typeable, typeRep )
+    ( Typeable )
 import UnliftIO.Exception
     ( Exception )
 import UnliftIO.MVar
@@ -1026,11 +1023,10 @@ readNextWithdrawal ctx (Coin withdrawal) = do
             DerivationIndex 0 :| []
 
 readRewardAccount
-    :: forall ctx s k (n :: NetworkDiscriminant) shelley.
+    :: forall ctx s k.
         ( HasDBLayer IO s k ctx
-        , shelley ~ SeqState n ShelleyKey
-        , Typeable n
-        , Typeable s
+        , GetRewardAccount s k
+        , WalletKey k
         )
     => ctx
     -> WalletId
@@ -1040,15 +1036,16 @@ readRewardAccount ctx wid = db & \DBLayer{..} -> do
         $ mapExceptT atomically
         $ withNoSuchWallet wid
         $ readCheckpoint wid
-    case testEquality (typeRep @s) (typeRep @shelley) of
+    case getRewardAccount @s @k (getState cp) of
         Nothing ->
             throwE ErrReadRewardAccountNotAShelleyWallet
-        Just Refl -> do
-            let s = getState cp
-            let xpub = Seq.rewardAccountKey s
-            let acct = toRewardAccount xpub
-            let path = stakeDerivationPath $ Seq.derivationPrefix s
+        Just (xpub, acct, path) ->
             pure (acct, getRawKey xpub, path)
+            -- let s = getState cp
+            -- let xpub = Seq.rewardAccountKey s
+            -- let acct = toRewardAccount xpub
+            -- let path = stakeDerivationPath $ Seq.derivationPrefix s
+            -- pure (acct, getRawKey xpub, path)
   where
     db = ctx ^. dbLayer @IO @s @k
 
@@ -1069,23 +1066,22 @@ queryRewardBalance ctx acct = do
     nw = ctx ^. networkLayer
 
 manageRewardBalance
-    :: forall ctx s k (n :: NetworkDiscriminant).
+    :: forall ctx s k.
         ( HasLogger WalletWorkerLog ctx
         , HasNetworkLayer IO ctx
         , HasDBLayer IO s k ctx
-        , Typeable s
-        , Typeable n
+        , GetRewardAccount s k
+        , WalletKey k
         )
-    => Proxy n
-    -> ctx
+    => ctx
     -> WalletId
     -> IO ()
-manageRewardBalance _ ctx wid = db & \DBLayer{..} -> do
+manageRewardBalance ctx wid = db & \DBLayer{..} -> do
     watchNodeTip $ \bh -> do
          traceWith tr $ MsgRewardBalanceQuery bh
          query <- runExceptT $ do
             (acct, _, _) <- withExceptT ErrFetchRewardsReadRewardAccount $
-                readRewardAccount @ctx @s @k @n ctx wid
+                readRewardAccount @ctx @s @k ctx wid
             queryRewardBalance @ctx ctx acct
          traceWith tr $ MsgRewardBalanceResult query
          case query of
@@ -1596,13 +1592,13 @@ makeTxInKeyLookup ctx wid pwd = do
 -- do so, use 'submitTx'.
 --
 buildAndSignTransaction
-    :: forall ctx s k (n :: NetworkDiscriminant).
+    :: forall ctx s k.
         ( HasTransactionLayer k ctx
         , HasDBLayer IO s k ctx
         , HasNetworkLayer IO ctx
         , IsOwned s k
-        , Typeable s
-        , Typeable n
+        , GetRewardAccount s k
+        , WalletKey k
         )
     => ctx
     -> WalletId
@@ -1616,7 +1612,7 @@ buildAndSignTransaction
     -> ExceptT ErrSignPayment IO (Tx, TxMeta, UTCTime, SealedTx)
 buildAndSignTransaction ctx wid mkRwdAcct pwd txCtx sel = do
     unsigned <- withExceptT ErrSignPaymentConstructTx $
-        constructTransaction @ctx @s @k @n ctx wid txCtx sel
+        constructTransaction @ctx @s @k ctx wid txCtx sel
     sealed <- withExceptT ErrSignPaymentSignTx $
         signTransaction @ctx @s @k ctx wid mkRwdAcct pwd unsigned
     getFullTxInfo @ctx @s @k ctx wid txCtx sel sealed
@@ -1649,12 +1645,12 @@ getFullTxInfo ctx wid txCtx sel sealed = db & \DBLayer{..} -> do
 
 -- | Construct an unsigned transaction from a given selection.
 constructTransaction
-    :: forall ctx s k (n :: NetworkDiscriminant).
+    :: forall ctx s k.
         ( HasTransactionLayer k ctx
         , HasDBLayer IO s k ctx
         , HasNetworkLayer IO ctx
-        , Typeable s
-        , Typeable n
+        , GetRewardAccount s k
+        , WalletKey k
         )
     => ctx
     -> WalletId
@@ -1663,7 +1659,7 @@ constructTransaction
     -> ExceptT ErrConstructTx IO SealedTx
 constructTransaction ctx wid txCtx sel = do
     (_, xpub, _) <- withExceptT ErrConstructTxReadRewardAccount $
-        readRewardAccount @ctx @s @k @n ctx wid
+        readRewardAccount @ctx @s @k ctx wid
     eraPP <- liftIO $ (,) <$> currentNodeEra nl <*> currentProtocolParameters nl
     withExceptT ErrConstructTxSign $ ExceptT $ pure $
         mkTransactionBody tl eraPP xpub txCtx sel
