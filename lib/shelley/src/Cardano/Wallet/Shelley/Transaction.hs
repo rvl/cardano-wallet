@@ -225,7 +225,7 @@ _mkSignedTransaction
         , WalletKey k
         )
     => Cardano.NetworkId
-    -> (XPrv, Passphrase "encryption")
+    -> Maybe (XPrv, Passphrase "encryption")
     -- ^ Reward account
     -> (TxIn -> Maybe Address)
     -- ^ Tx input resolver
@@ -257,7 +257,7 @@ mkSignedShelleyTransaction
         , IsShelleyBasedEra era
         )
     => Cardano.NetworkId
-    -> (XPrv, Passphrase "encryption")
+    -> Maybe (XPrv, Passphrase "encryption")
     -- ^ Reward account
     -> (TxIn -> Either ErrSignTx (k 'AddressK XPrv, Passphrase "encryption"))
     -- ^ Key store
@@ -282,7 +282,7 @@ mkSignedShelleyTransaction networkId stakeCreds lookupXPrv tx = do
                 (k, pwd) <- lookupXPrv txin
                 pure $ mkShelleyWitness body (getRawKey k, pwd)
 
-            let wdrlsWits = [mkShelleyWitness body stakeCreds | areWdrls]
+            let wdrlsWits = [mkShelleyWitness body c | areWdrls, Just c <- [stakeCreds]]
 
             pure $ mkExtraWits body <> F.toList addrWits <> wdrlsWits
 
@@ -333,7 +333,7 @@ _mkTransaction
     -> (AnyCardanoEra, ProtocolParameters)
         -- Era and protocol parameters for which the transaction should be
         -- created.
-    -> (XPrv, Passphrase "encryption")
+    -> Maybe (XPrv, Passphrase "encryption")
         -- Reward account
     -> (Address -> Maybe (k 'AddressK XPrv, Passphrase "encryption"))
         -- Key store
@@ -344,15 +344,16 @@ _mkTransaction
         -- assigned.
     -> Either ErrSignTx (Tx, SealedTx)
 _mkTransaction networkId eraPP stakeCreds keystore ctx cs = do
-    unsigned <- _mkTransactionBody networkId eraPP (toXPub $ fst stakeCreds) ctx cs
-    let resolver = fmap (view #address) . inputFromSelection cs
+    let xpub = toXPub . fst <$> stakeCreds
+        resolver = fmap (view #address) . inputFromSelection cs
+    unsigned <- _mkTransactionBody networkId eraPP xpub ctx cs
     signed <- _mkSignedTransaction networkId stakeCreds resolver keystore unsigned
     pure (addResolvedInputs cs (_decodeSignedTx signed), signed)
 
 _mkTransactionBody
     :: Cardano.NetworkId
     -> (AnyCardanoEra, ProtocolParameters)
-    -> XPub
+    -> Maybe XPub
     -> TransactionCtx
     -> SelectionResult TxOut
     -> Either ErrSignTx SealedTx
@@ -367,24 +368,24 @@ _mkTransactionBody networkId (e@(AnyCardanoEra era), pp) rewardAcct ctx cs =
 mkShelleyTransactionBody
     :: forall era. Cardano.IsCardanoEra era
     => Cardano.NetworkId
-    -> XPub
+    -> Maybe XPub
     -> ProtocolParameters
     -> TransactionCtx
     -> SelectionResult TxOut
     -> ShelleyBasedEra era
     -> Either ErrSignTx (Cardano.TxBody era)
-mkShelleyTransactionBody networkId stakeXPub pp ctx cs era =
+mkShelleyTransactionBody networkId mStakeXPub pp ctx cs era =
     toCardanoTxBody era payload ttl wdrls cs fee
   where
     payload = TxPayload (view #txMetadata ctx) certs
     ttl = txTimeToLive ctx
     wdrl = withdrawalToCoin $ view #txWithdrawal ctx
-    wdrls = mkWithdrawals networkId rewardAcct wdrl
-    rewardAcct = toRewardAccountRaw stakeXPub
+    wdrls = maybe [] (mkWithdrawals networkId wdrl) rewardAcct
+    rewardAcct = toRewardAccountRaw <$> mStakeXPub
 
-    (deposits, certs) = case view #txDelegationAction ctx of
-        Nothing -> (Coin 0, mempty)
-        Just d -> (getDeposits d, mkDelegationCertificates d stakeXPub)
+    (deposits, certs) = case (view #txDelegationAction ctx, mStakeXPub) of
+        (Just d, Just xpub) -> (getDeposits d, mkDelegationCertificates d xpub)
+        _ -> (Coin 0, mempty)
 
     feeGap = selectionDelta txOutCoin cs
     fee = unsafeSubtractCoin cs feeGap deposits
@@ -1317,10 +1318,10 @@ toCardanoTxBody era (TxPayload md certs) ttl wdrl cs fee =
 
 mkWithdrawals
     :: NetworkId
-    -> RewardAccount
     -> Coin
+    -> RewardAccount
     -> [(Cardano.StakeAddress, Cardano.Lovelace)]
-mkWithdrawals networkId acc amount
+mkWithdrawals networkId amount acc
     | amount == Coin 0 = mempty
     | otherwise = [ (stakeAddress, toCardanoLovelace amount) ]
   where

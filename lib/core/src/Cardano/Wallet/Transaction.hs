@@ -84,7 +84,7 @@ data TransactionLayer k = TransactionLayer
         :: (AnyCardanoEra, ProtocolParameters)
             -- Era and protocol parameters for which the transaction should be
             -- created.
-        -> (XPrv, Passphrase "encryption")
+        -> Maybe (XPrv, Passphrase "encryption")
             -- Reward account
         -> (Address -> Maybe (k 'AddressK XPrv, Passphrase "encryption"))
             -- Key store
@@ -106,8 +106,8 @@ data TransactionLayer k = TransactionLayer
         :: (AnyCardanoEra, ProtocolParameters)
             -- Era and protocol parameters for which the transaction should be
             -- created.
-        -> XPub
-            -- Reward account public key
+        -> Maybe XPub
+            -- Reward account public key, if there is one.
         -> TransactionCtx
             -- An additional context about the transaction
         -> SelectionResult TxOut
@@ -122,7 +122,7 @@ data TransactionLayer k = TransactionLayer
         -- The function returns CBOR-ed transaction body to be signed in another step.
 
     , mkSignedTransaction
-        :: (XPrv, Passphrase "encryption")
+        :: Maybe (XPrv, Passphrase "encryption")
             -- Reward account
         -> (TxIn -> Maybe Address)
             -- Input resolver

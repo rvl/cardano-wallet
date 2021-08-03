@@ -463,6 +463,8 @@ import Data.Text.Class
     ( ToText (..) )
 import Data.Time.Clock
     ( NominalDiffTime, UTCTime )
+import Data.Tuple.Extra
+    ( fst3 )
 import Data.Void
     ( Void )
 import Data.Word
@@ -1030,23 +1032,12 @@ readRewardAccount
         )
     => ctx
     -> WalletId
-    -> ExceptT ErrReadRewardAccount IO (RewardAccount, XPub, NonEmpty DerivationIndex)
+    -> ExceptT ErrNoSuchWallet IO (Maybe (XPub, RewardAccount, NonEmpty DerivationIndex))
 readRewardAccount ctx wid = db & \DBLayer{..} -> do
-    cp <- withExceptT ErrReadRewardAccountNoSuchWallet
-        $ mapExceptT atomically
-        $ withNoSuchWallet wid
-        $ readCheckpoint wid
-    case getRewardAccount @s @k (getState cp) of
-        Nothing ->
-            throwE ErrReadRewardAccountNotAShelleyWallet
-        Just (xpub, acct, path) ->
-            pure (acct, getRawKey xpub, path)
-            -- let s = getState cp
-            -- let xpub = Seq.rewardAccountKey s
-            -- let acct = toRewardAccount xpub
-            -- let path = stakeDerivationPath $ Seq.derivationPrefix s
-            -- pure (acct, getRawKey xpub, path)
+    cp <- mapExceptT atomically $ withNoSuchWallet wid $ readCheckpoint wid
+    pure $ raw <$> getRewardAccount @s @k (getState cp)
   where
+    raw (vk, acct, path) = (getRawKey vk, acct, path)
     db = ctx ^. dbLayer @IO @s @k
 
 -- | Query the node for the reward balance of a given wallet.
@@ -1079,22 +1070,23 @@ manageRewardBalance
 manageRewardBalance ctx wid = db & \DBLayer{..} -> do
     watchNodeTip $ \bh -> do
          traceWith tr $ MsgRewardBalanceQuery bh
-         query <- runExceptT $ do
-            (acct, _, _) <- withExceptT ErrFetchRewardsReadRewardAccount $
-                readRewardAccount @ctx @s @k ctx wid
-            queryRewardBalance @ctx ctx acct
-         traceWith tr $ MsgRewardBalanceResult query
-         case query of
+         ra <- runExceptT (readRewardAccount @ctx @s @k ctx wid)
+         res <- case ra of
+             Right (Just (_, acct, _)) ->
+                 Right <$> getCachedRewardAccountBalance acct
+             Right Nothing -> pure $ Left $
+                 ErrFetchRewardsReadRewardAccount ErrReadRewardAccountNotAShelleyWallet
+             Left e -> pure $ Left $
+                 ErrFetchRewardsReadRewardAccount $ ErrReadRewardAccountNoSuchWallet e
+         traceWith tr $ MsgRewardBalanceResult res
+         case res of
             Right amt -> do
-                res <- atomically $ runExceptT $
-                    putDelegationRewardBalance wid amt
+                bal <- atomically $ runExceptT $ putDelegationRewardBalance wid amt
                 -- It can happen that the wallet doesn't exist _yet_, whereas we
                 -- already have a reward balance. If that's the case, we log and
                 -- move on.
-                case res of
-                    Left err -> traceWith tr $ MsgRewardBalanceNoSuchWallet err
-                    Right () -> pure ()
-            Left _err ->
+                either (traceWith tr . MsgRewardBalanceNoSuchWallet) pure bal
+            Left _ ->
                 -- Occasionaly failing to query is generally not fatal. It will
                 -- just update the balance next time the tip changes.
                 pure ()
@@ -1102,7 +1094,7 @@ manageRewardBalance ctx wid = db & \DBLayer{..} -> do
 
   where
     db = ctx ^. dbLayer @IO @s @k
-    NetworkLayer{watchNodeTip} = ctx ^. networkLayer
+    NetworkLayer{watchNodeTip,getCachedRewardAccountBalance} = ctx ^. networkLayer
     tr = contramap MsgWallet $ ctx ^. logger @WalletWorkerLog
 
 {-------------------------------------------------------------------------------
@@ -1540,7 +1532,7 @@ signTransaction ctx wid mkRwdAcct pwd tx = do
     (resolver, keyFrom) <- makeTxInKeyLookup @ctx @s @k ctx wid pwd
 
     withExceptT ErrWitnessTxSignTx $ ExceptT $ pure $
-        mkSignedTransaction tl rewardAcnt resolver keyFrom tx
+        mkSignedTransaction tl (Just rewardAcnt) resolver keyFrom tx
 
   where
     tl = ctx ^. transactionLayer @k
@@ -1658,11 +1650,11 @@ constructTransaction
     -> SelectionResult TxOut
     -> ExceptT ErrConstructTx IO SealedTx
 constructTransaction ctx wid txCtx sel = do
-    (_, xpub, _) <- withExceptT ErrConstructTxReadRewardAccount $
+    mXPub <- fmap (fmap fst3) $ withExceptT ErrConstructTxNoSuchWallet $
         readRewardAccount @ctx @s @k ctx wid
     eraPP <- liftIO $ (,) <$> currentNodeEra nl <*> currentProtocolParameters nl
     withExceptT ErrConstructTxSign $ ExceptT $ pure $
-        mkTransactionBody tl eraPP xpub txCtx sel
+        mkTransactionBody tl eraPP mXPub txCtx sel
   where
     tl = ctx ^. transactionLayer @k
     nl = ctx ^. networkLayer
@@ -2608,7 +2600,6 @@ data ErrConstructTx
     = ErrConstructTxWrongPayload
     | ErrConstructTxSign ErrSignTx
     | ErrConstructTxNoSuchWallet ErrNoSuchWallet
-    | ErrConstructTxReadRewardAccount ErrReadRewardAccount
     | ErrConstructTxIncorrectTTL PastHorizonException
     | ErrConstructTxNotImplemented String
       -- ^ Temporary error constructor.
