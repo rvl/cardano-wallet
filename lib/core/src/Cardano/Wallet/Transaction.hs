@@ -81,14 +81,13 @@ import qualified Data.List.NonEmpty as NE
 
 data TransactionLayer k = TransactionLayer
     { mkTransaction
-        :: AnyCardanoEra
-            -- Era for which the transaction should be created.
+        :: (AnyCardanoEra, ProtocolParameters)
+            -- Era and protocol parameters for which the transaction should be
+            -- created.
         -> (XPrv, Passphrase "encryption")
             -- Reward account
         -> (Address -> Maybe (k 'AddressK XPrv, Passphrase "encryption"))
             -- Key store
-        -> ProtocolParameters
-            -- Current protocol parameters
         -> TransactionCtx
             -- An additional context about the transaction
         -> SelectionResult TxOut
@@ -104,12 +103,11 @@ data TransactionLayer k = TransactionLayer
         -- key corresponding to a particular address.
 
     , mkTransactionBody
-        :: AnyCardanoEra
-            -- Era for which the transaction should be created.
+        :: (AnyCardanoEra, ProtocolParameters)
+            -- Era and protocol parameters for which the transaction should be
+            -- created.
         -> XPub
             -- Reward account public key
-        -> ProtocolParameters
-            -- Current protocol parameters
         -> TransactionCtx
             -- An additional context about the transaction
         -> SelectionResult TxOut

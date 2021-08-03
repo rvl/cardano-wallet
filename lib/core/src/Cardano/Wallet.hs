@@ -1565,9 +1565,9 @@ makeRewardAccount ctx wid mkRwdAcct pwd =
     withRootKey @_ @s ctx wid pwd id $ \xprv scheme ->
         pure $ mkRwdAcct (xprv, (preparePassphrase scheme pwd))
 
--- | Uses the wallet's address discovery state and UTxO set to produce a lookup
--- function that converts a 'TxIn' to an address key that can be used to spend
--- that inupt.
+-- | Uses the wallet's address discovery state and UTxO set to produce a pair of
+-- lookup functions that can convert a 'TxIn' to an address key that can be used
+-- to spend that inupt.
 makeTxInKeyLookup
     :: forall ctx s k.
         ( HasDBLayer IO s k ctx
@@ -1596,11 +1596,13 @@ makeTxInKeyLookup ctx wid pwd = do
 -- do so, use 'submitTx'.
 --
 buildAndSignTransaction
-    :: forall ctx s k.
+    :: forall ctx s k (n :: NetworkDiscriminant).
         ( HasTransactionLayer k ctx
         , HasDBLayer IO s k ctx
         , HasNetworkLayer IO ctx
         , IsOwned s k
+        , Typeable s
+        , Typeable n
         )
     => ctx
     -> WalletId
@@ -1612,22 +1614,33 @@ buildAndSignTransaction
     -> TransactionCtx
     -> SelectionResult TxOut
     -> ExceptT ErrSignPayment IO (Tx, TxMeta, UTCTime, SealedTx)
-buildAndSignTransaction ctx wid mkRwdAcct pwd txCtx sel = db & \DBLayer{..} -> do
-    era <- liftIO $ currentNodeEra nl
-    withRootKey @_ @s ctx wid pwd ErrSignPaymentWithRootKey $ \xprv scheme -> do
-        let pwdP = preparePassphrase scheme pwd
-        mapExceptT atomically $ do
-            cp <- withExceptT ErrSignPaymentNoSuchWallet
-                $ withNoSuchWallet wid
-                $ readCheckpoint wid
-            pp <- liftIO $ currentProtocolParameters nl
-            let keyFrom = isOwned (getState cp) (xprv, pwdP)
-            let rewardAcnt = mkRwdAcct (xprv, pwdP)
-            (tx, sealedTx) <- withExceptT ErrSignPaymentSignTx $ ExceptT $ pure $
-                mkTransaction tl era rewardAcnt keyFrom pp txCtx sel
-            (time, meta) <- liftIO $
-                mkTxMeta ti (currentTip cp) (getState cp) txCtx sel
-            return (tx, meta, time, sealedTx)
+buildAndSignTransaction ctx wid mkRwdAcct pwd txCtx sel = do
+    unsigned <- withExceptT ErrSignPaymentConstructTx $
+        constructTransaction @ctx @s @k @n ctx wid txCtx sel
+    sealed <- withExceptT ErrSignPaymentSignTx $
+        signTransaction @ctx @s @k ctx wid mkRwdAcct pwd unsigned
+    getFullTxInfo @ctx @s @k ctx wid txCtx sel sealed
+
+getFullTxInfo
+    :: forall ctx s k.
+        ( HasTransactionLayer k ctx
+        , HasDBLayer IO s k ctx
+        , HasNetworkLayer IO ctx
+        , IsOurs s Address
+        )
+    => ctx
+    -> WalletId
+    -> TransactionCtx
+    -> SelectionResult TxOut
+    -> SealedTx
+    -> ExceptT ErrSignPayment IO (Tx, TxMeta, UTCTime, SealedTx)
+getFullTxInfo ctx wid txCtx sel sealed = db & \DBLayer{..} -> do
+    cp <- mapExceptT atomically $
+        withExceptT ErrSignPaymentNoSuchWallet $ withNoSuchWallet wid $
+            readCheckpoint wid
+    liftIO $ do
+        (time, meta) <- mkTxMeta ti (currentTip cp) (getState cp) txCtx sel
+        pure (decodeSignedTx tl sealed, meta, time, sealed)
   where
     db = ctx ^. dbLayer @IO @s @k
     tl = ctx ^. transactionLayer @k
@@ -1648,17 +1661,13 @@ constructTransaction
     -> TransactionCtx
     -> SelectionResult TxOut
     -> ExceptT ErrConstructTx IO SealedTx
-constructTransaction ctx wid txCtx sel =
-    db & \DBLayer{..} -> do
-    era <- liftIO $ currentNodeEra nl
+constructTransaction ctx wid txCtx sel = do
     (_, xpub, _) <- withExceptT ErrConstructTxReadRewardAccount $
         readRewardAccount @ctx @s @k @n ctx wid
-    mapExceptT atomically $ do
-        pp <- liftIO $ currentProtocolParameters nl
-        withExceptT ErrConstructTxSign $ ExceptT $ pure $
-            mkTransactionBody tl era xpub pp txCtx sel
+    eraPP <- liftIO $ (,) <$> currentNodeEra nl <*> currentProtocolParameters nl
+    withExceptT ErrConstructTxSign $ ExceptT $ pure $
+        mkTransactionBody tl eraPP xpub txCtx sel
   where
-    db = ctx ^. dbLayer @IO @s @k
     tl = ctx ^. transactionLayer @k
     nl = ctx ^. networkLayer
 
@@ -2591,7 +2600,8 @@ newtype ErrListUTxOStatistics
 
 -- | Errors that can occur when signing a transaction.
 data ErrSignPayment
-    = ErrSignPaymentSignTx ErrSignTx
+    = ErrSignPaymentConstructTx ErrConstructTx
+    | ErrSignPaymentSignTx ErrWitnessTx
     | ErrSignPaymentNoSuchWallet ErrNoSuchWallet
     | ErrSignPaymentWithRootKey ErrWithRootKey
     | ErrSignPaymentIncorrectTTL PastHorizonException

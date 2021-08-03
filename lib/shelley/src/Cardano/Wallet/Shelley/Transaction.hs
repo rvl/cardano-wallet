@@ -329,35 +329,34 @@ _mkTransaction
         , WalletKey k
         )
     => NetworkId
-    -> AnyCardanoEra
-        -- Era for which the transaction should be created.
+        -- Network discriminator for transaction addresses.
+    -> (AnyCardanoEra, ProtocolParameters)
+        -- Era and protocol parameters for which the transaction should be
+        -- created.
     -> (XPrv, Passphrase "encryption")
         -- Reward account
     -> (Address -> Maybe (k 'AddressK XPrv, Passphrase "encryption"))
         -- Key store
-    -> ProtocolParameters
-        -- Current protocol parameters
     -> TransactionCtx
         -- An additional context about the transaction
     -> SelectionResult TxOut
         -- A balanced coin selection where all change addresses have been
         -- assigned.
     -> Either ErrSignTx (Tx, SealedTx)
-_mkTransaction networkId era stakeCreds keystore pp ctx cs = do
-    unsigned <- _mkTransactionBody networkId era (toXPub $ fst stakeCreds) pp ctx cs
+_mkTransaction networkId eraPP stakeCreds keystore ctx cs = do
+    unsigned <- _mkTransactionBody networkId eraPP (toXPub $ fst stakeCreds) ctx cs
     let resolver = fmap (view #address) . inputFromSelection cs
     signed <- _mkSignedTransaction networkId stakeCreds resolver keystore unsigned
     pure (addResolvedInputs cs (_decodeSignedTx signed), signed)
 
 _mkTransactionBody
     :: Cardano.NetworkId
-    -> AnyCardanoEra
+    -> (AnyCardanoEra, ProtocolParameters)
     -> XPub
-    -> ProtocolParameters
     -> TransactionCtx
     -> SelectionResult TxOut
     -> Either ErrSignTx SealedTx
-_mkTransactionBody networkId e@(AnyCardanoEra era) rewardAcct pp ctx cs =
+_mkTransactionBody networkId (e@(AnyCardanoEra era), pp) rewardAcct ctx cs =
      case cardanoEraStyle era of
         Cardano.LegacyByronEra ->
             Left $ ErrSignTxInvalidEra e
