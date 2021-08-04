@@ -887,6 +887,9 @@ gcDelistedPools gcStatus tr DBLayer{..} fetchDelisted = forever $ do
     threadDelay sleepTime
     pure ()
 
+{-------------------------------------------------------------------------------
+    Logging
+-------------------------------------------------------------------------------}
 data StakePoolLog
     = MsgExitMonitoring AfterThreadLog
     | MsgStakePoolGarbageCollection PoolGarbageCollectionInfo

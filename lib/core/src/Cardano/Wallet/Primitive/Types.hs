@@ -740,6 +740,10 @@ instance ToJSON PoolOwner where
 
 -- | Information need for the computation of rewards, such as the
 -- stake currently delegated to a pool, or the pool cost and margin.
+--
+-- This information is mostly derived from the @RewardProvenancePool@
+-- type in 'Shelley.Spec.Ledger.RewardProvenance',
+-- but reorganized and shortened.
 data RewardProvenancePool = RewardProvenancePool
     { stakeRelative :: Percentage -- ^ sigma = pool stake / total stake
     , ownerPledge :: Coin -- ^ pledge of pool owner(s)
