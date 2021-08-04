@@ -193,7 +193,7 @@ import Test.QuickCheck
     , (==>)
     )
 import Test.QuickCheck.Gen
-    ( Gen (..) )
+    ( Gen (..), listOf1 )
 import Test.QuickCheck.Random
     ( mkQCGen )
 import Test.Utils.Pretty
@@ -294,11 +294,10 @@ instance Eq (InAnyCardanoEra Cardano.KeyWitness) where
         Just Refl -> a == b
         Nothing -> False
 
-
 decodeSignedTxSpec :: Spec
-decodeSignedTxSpec = describe "decodeSignedTx testing" $ do
-    prop "roundtrip for Shelley witnesses" prop_decodeSignedShelleyTxRoundtrip
-    prop "roundtrip for Byron witnesses" prop_decodeSignedByronTxRoundtrip
+decodeSignedTxSpec = describe "SealedTx serialisation/deserialisation" $ do
+    prop "roundtrip for Shelley witnesses" prop_sealedTxShelleyRoundtrip
+    prop "roundtrip for Byron witnesses" prop_sealedTxByronRoundtrip
 
 -- Note:
 --
@@ -737,14 +736,14 @@ estimateMaxInputsTests cases = do
             (prop_biggerMaxSizeMeansMoreInputs @k)
 
 --------------------------------------------------------------------------------
--- Roundtrip tests
+-- Roundtrip tests for SealedTx
 
-prop_decodeSignedShelleyTxRoundtrip
+prop_sealedTxShelleyRoundtrip
     :: AnyShelleyBasedEra
     -> AnyCardanoEra
     -> Pretty DecodeSetup
     -> Property
-prop_decodeSignedShelleyTxRoundtrip txEra@(AnyShelleyBasedEra era) currentEra (Pretty tc) = conjoin
+prop_sealedTxShelleyRoundtrip txEra@(AnyShelleyBasedEra era) currentEra (Pretty tc) = conjoin
     [ txBytes ==== serialisedTx sealedTxC
     , either (\e -> counterexample (show e) False) (compareOnCBOR tx) sealedTxB
     ]
@@ -773,12 +772,12 @@ makeShelleyTx era testCase = Cardano.makeSignedTransaction addrWits unsigned
         , utxoRemaining = UTxOIndex.empty
         }
 
-prop_decodeSignedByronTxRoundtrip
+prop_sealedTxByronRoundtrip
     :: AnyShelleyBasedEra
     -> AnyCardanoEra
     -> Pretty (ForByron DecodeSetup)
     -> Property
-prop_decodeSignedByronTxRoundtrip txEra@(AnyShelleyBasedEra era) currentEra (Pretty tc) = conjoin
+prop_sealedTxByronRoundtrip txEra@(AnyShelleyBasedEra era) currentEra (Pretty tc) = conjoin
     [ txBytes ==== serialisedTx sealedTxC
     , either (\e -> counterexample (show e) False) (compareOnCBOR tx) sealedTxB
     ]
@@ -862,14 +861,13 @@ data DecodeSetup = DecodeSetup
 instance Arbitrary DecodeSetup where
     arbitrary = do
         utxo <- arbitrary
-        n <- choose (1,10)
-        outs <- vectorOf n arbitrary
-        md <- arbitrary
-        slot <- arbitrary
-        let numInps = Map.size $ getUTxO utxo
-        pairs <- vectorOf numInps arbitrary
-        net <- arbitrary
-        pure $ DecodeSetup utxo outs md slot pairs net
+        DecodeSetup utxo
+            <$> listOf1 arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> vectorOf (Map.size $ getUTxO utxo) arbitrary
+            <*> arbitrary
+
     shrink (DecodeSetup i o m t k n) =
         [ DecodeSetup i' o' m' t' k' n'
         | (i',o',m',t',k',n') <- shrink (i,o,m,t,k,n) ]
