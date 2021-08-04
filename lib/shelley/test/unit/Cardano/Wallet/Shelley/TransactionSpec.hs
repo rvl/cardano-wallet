@@ -13,8 +13,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes #-}
 
 module Cardano.Wallet.Shelley.TransactionSpec
     ( spec
@@ -35,10 +33,9 @@ import Cardano.Api
     ( AnyCardanoEra (..)
     , CardanoEra (..)
     , CardanoEraStyle (..)
-    , InAnyCardanoEra (InAnyCardanoEra)
-    , InAnyShelleyBasedEra (..)
-    , IsCardanoEra
-    , IsShelleyBasedEra
+    , InAnyCardanoEra (..)
+    , IsCardanoEra (..)
+    , IsShelleyBasedEra (..)
     , ShelleyBasedEra (..)
     , cardanoEraStyle
     )
@@ -109,9 +106,11 @@ import Cardano.Wallet.Primitive.Types.Tx
 import Cardano.Wallet.Primitive.Types.UTxO
     ( UTxO (..) )
 import Cardano.Wallet.Shelley.Compatibility
-    ( computeTokenBundleSerializedLengthBytes
+    ( AnyShelleyBasedEra (..)
+    , computeTokenBundleSerializedLengthBytes
+    , getShelleyBasedEra
     , maxTokenBundleSerializedLengthBytes
-    , shelleyBasedToCardanoEra
+    , shelleyToCardanoEra
     )
 import Cardano.Wallet.Shelley.Transaction
     ( TxPayload (..)
@@ -140,8 +139,6 @@ import Control.Monad.Trans.Except
     ( except, runExceptT )
 import Data.Function
     ( on, (&) )
-import Data.Functor.Const
-    ( Const (..) )
 import Data.List.NonEmpty
     ( NonEmpty (..) )
 import Data.Maybe
@@ -152,10 +149,8 @@ import Data.Quantity
     ( Quantity (..) )
 import Data.Semigroup
     ( Sum (Sum), getSum, mtimesDefault )
-import Data.Type.Equality
-    ( (:~:) (..), testEquality )
 import Data.Typeable
-    ( Typeable (..), typeRep )
+    ( Typeable, typeRep )
 import Data.Word
     ( Word16, Word64, Word8 )
 import Ouroboros.Network.Block
@@ -221,16 +216,16 @@ spec = do
     transactionConstraintsSpec
 
 forAllEras :: (AnyCardanoEra -> Spec) -> Spec
-forAllEras spec = do
-    spec (AnyCardanoEra ByronEra)
-    forAllShelleyBasedEras spec
+forAllEras eraSpec = do
+    eraSpec (AnyCardanoEra ByronEra)
+    forAllShelleyBasedEras eraSpec
 
 forAllShelleyBasedEras :: (AnyCardanoEra -> Spec) -> Spec
-forAllShelleyBasedEras spec = do
-    spec (AnyCardanoEra ShelleyEra)
-    spec (AnyCardanoEra AllegraEra)
-    spec (AnyCardanoEra MaryEra)
-    spec (AnyCardanoEra AlonzoEra)
+forAllShelleyBasedEras eraSpec = do
+    eraSpec (AnyCardanoEra ShelleyEra)
+    eraSpec (AnyCardanoEra AllegraEra)
+    eraSpec (AnyCardanoEra MaryEra)
+    eraSpec (AnyCardanoEra AlonzoEra)
 
 allEras :: [(Int, AnyCardanoEra)]
 allEras =
@@ -257,42 +252,9 @@ instance Arbitrary AnyCardanoEra where
     -- Shrink by choosing a *later* era
     shrink e = map snd $ filter ((> eraNum e) . fst) allEras
 
-data AnyShelleyBasedEra where
-     AnyShelleyBasedEra :: IsShelleyBasedEra era -- Provide class constraint
-                        => ShelleyBasedEra era   -- and explicit value.
-                        -> AnyShelleyBasedEra    -- and that's it.
-
-instance Show AnyShelleyBasedEra where
-    show (AnyShelleyBasedEra era) = show era
-
-anyShelleyBasedEra :: InAnyShelleyBasedEra (Const ()) -> AnyShelleyBasedEra
-anyShelleyBasedEra (InAnyShelleyBasedEra era _) = AnyShelleyBasedEra era
-
-shelleyToCardanoEra :: AnyShelleyBasedEra -> AnyCardanoEra
-shelleyToCardanoEra (AnyShelleyBasedEra era) = AnyCardanoEra (shelleyBasedToCardanoEra era)
-
-getShelleyBasedEra :: AnyCardanoEra -> Maybe AnyShelleyBasedEra
-getShelleyBasedEra (AnyCardanoEra e) = case cardanoEraStyle e of
-    LegacyByronEra -> Nothing
-    ShelleyBasedEra era -> Just (anyShelleyBasedEra (InAnyShelleyBasedEra era (Const ())))
-
 instance Arbitrary AnyShelleyBasedEra where
     arbitrary = suchThatMap (getShelleyBasedEra <$> arbitrary) id
     -- shrink = _fixme
-
--- Failing at type-fu here.
-instance Show (InAnyCardanoEra Cardano.TxBody) where
-    show (InAnyCardanoEra era thing) = "InAnyCardanoEra " ++ show era ++ "(" ++ show thing ++ ")"
-instance Show (InAnyCardanoEra Cardano.KeyWitness) where
-    show (InAnyCardanoEra era thing) = "InAnyCardanoEra " ++ show era ++ "(" ++ show thing ++ ")"
-instance Eq (InAnyCardanoEra Cardano.TxBody) where
-    InAnyCardanoEra e1 a == InAnyCardanoEra e2 b = case testEquality e1 e2 of
-        Just Refl -> a == b
-        Nothing -> False
-instance Eq (InAnyCardanoEra Cardano.KeyWitness) where
-    InAnyCardanoEra e1 a == InAnyCardanoEra e2 b = case testEquality e1 e2 of
-        Just Refl -> a == b
-        Nothing -> False
 
 decodeSignedTxSpec :: Spec
 decodeSignedTxSpec = describe "SealedTx serialisation/deserialisation" $ do
@@ -499,7 +461,7 @@ feeEstimationRegressionSpec = describe "Regression tests" $ do
 binaryCalculationsSpec :: AnyCardanoEra -> Spec
 binaryCalculationsSpec (AnyCardanoEra era) = case cardanoEraStyle era of
     LegacyByronEra -> pure ()
-    ShelleyBasedEra era -> binaryCalculationsSpec' era
+    ShelleyBasedEra shelleyEra -> binaryCalculationsSpec' shelleyEra
 
 binaryCalculationsSpec' :: IsShelleyBasedEra era => ShelleyBasedEra era -> Spec
 binaryCalculationsSpec' era =

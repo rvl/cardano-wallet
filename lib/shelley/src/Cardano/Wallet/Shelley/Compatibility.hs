@@ -9,6 +9,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -17,6 +18,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- Orphan instances for {Encode,Decode}Address until we get rid of the
 -- Jörmungandr dual support.
@@ -46,9 +48,12 @@ module Cardano.Wallet.Shelley.Compatibility
 
       -- * Eras
     , AnyCardanoEra (..)
+    , AnyShelleyBasedEra (..)
     , CardanoEra (..)
     , ShelleyBasedEra (..)
     , shelleyBasedToCardanoEra
+    , shelleyToCardanoEra
+    , getShelleyBasedEra
 
       -- * Conversions
     , toCardanoHash
@@ -135,15 +140,21 @@ import Cardano.Api
     , AnyCardanoEra (..)
     , AsType (..)
     , CardanoEra (..)
+    , CardanoEraStyle (..)
     , CardanoMode
     , ConsensusModeParams (CardanoModeParams)
     , EraInMode (..)
+    , InAnyCardanoEra (..)
+    , InAnyShelleyBasedEra (..)
+    , IsCardanoEra (..)
+    , IsShelleyBasedEra (..)
     , LocalNodeConnectInfo (LocalNodeConnectInfo)
     , MaryEra
     , NetworkId
     , ShelleyBasedEra (..)
     , ShelleyEra
     , TxInMode (..)
+    , cardanoEraStyle
     , deserialiseFromRawBytes
     )
 import Cardano.Api.Shelley
@@ -208,6 +219,8 @@ import Data.Coerce
     ( coerce )
 import Data.Foldable
     ( asum, toList )
+import Data.Functor.Const
+    ( Const (..) )
 import Data.Map.Strict
     ( Map )
 import Data.Maybe
@@ -220,6 +233,8 @@ import Data.Text
     ( Text )
 import Data.Text.Class
     ( TextDecodingError (..) )
+import Data.Type.Equality
+    ( (:~:) (..), testEquality )
 import Data.Word
     ( Word16, Word32, Word64, Word8 )
 import Fmt
@@ -1327,6 +1342,39 @@ shelleyBasedToCardanoEra Cardano.ShelleyBasedEraShelley = ShelleyEra
 shelleyBasedToCardanoEra Cardano.ShelleyBasedEraAllegra = AllegraEra
 shelleyBasedToCardanoEra Cardano.ShelleyBasedEraMary    = MaryEra
 shelleyBasedToCardanoEra Cardano.ShelleyBasedEraAlonzo  = AlonzoEra
+
+-- | An existential type like 'AnyCardanoEra', but for 'ShelleyBasedEra'.
+data AnyShelleyBasedEra where
+     AnyShelleyBasedEra :: IsShelleyBasedEra era -- Provide class constraint
+                        => ShelleyBasedEra era   -- and explicit value.
+                        -> AnyShelleyBasedEra    -- and that's it.
+
+instance Show AnyShelleyBasedEra where
+    show (AnyShelleyBasedEra era) = "AnyShelleyBasedEra " ++ show era
+
+anyShelleyBasedEra :: InAnyShelleyBasedEra (Const ()) -> AnyShelleyBasedEra
+anyShelleyBasedEra (InAnyShelleyBasedEra era _) = AnyShelleyBasedEra era
+
+shelleyToCardanoEra :: AnyShelleyBasedEra -> AnyCardanoEra
+shelleyToCardanoEra (AnyShelleyBasedEra era) =
+    AnyCardanoEra (shelleyBasedToCardanoEra era)
+
+getShelleyBasedEra :: AnyCardanoEra -> Maybe AnyShelleyBasedEra
+getShelleyBasedEra (AnyCardanoEra e) = case cardanoEraStyle e of
+    LegacyByronEra -> Nothing
+    ShelleyBasedEra era -> Just
+        (anyShelleyBasedEra (InAnyShelleyBasedEra era (Const ())))
+
+instance (forall era. IsCardanoEra era => Show (thing era)) =>
+    Show (InAnyCardanoEra thing) where
+    show (InAnyCardanoEra era thing) =
+        "InAnyCardanoEra " ++ show era ++ " (" ++ show thing ++ ")"
+
+instance (forall era. IsCardanoEra era => Eq (thing era)) =>
+    Eq (InAnyCardanoEra thing) where
+    InAnyCardanoEra e1 a == InAnyCardanoEra e2 b = case testEquality e1 e2 of
+        Just Refl -> a == b
+        Nothing -> False
 
 {-------------------------------------------------------------------------------
                    Assessing sizes of token bundles
