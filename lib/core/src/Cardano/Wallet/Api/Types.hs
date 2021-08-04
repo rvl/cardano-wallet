@@ -982,6 +982,7 @@ data ApiExternalInput n = ApiExternalInput
 
 data ApiBalanceTransactionPostData n = ApiBalanceTransactionPostData
     { transaction :: !(ApiT SealedTx)
+    , signatories :: ![ApiAccountPublicKey]
     , inputs :: ![ApiExternalInput n]
     } deriving (Eq, Generic, Show)
 
@@ -2722,17 +2723,21 @@ instance EncodeAddress n => ToJSON (ApiExternalInput n) where
 instance DecodeAddress n => FromJSON (ApiBalanceTransactionPostData n) where
     parseJSON = withObject "ApiBalanceTransactionPostData" $ \o -> do
         cbor <- o .: "transaction" >>= (\trObj -> trObj .: "cborHex")
+        cosigners <- o .: "signatories"
         sealedTx <- parseSealedTxBytes @'Base16 cbor
         inpsObj <- o .: "inputs"
-        ApiBalanceTransactionPostData (ApiT sealedTx) <$> parseJSON inpsObj
+        ApiBalanceTransactionPostData (ApiT sealedTx)
+            <$> parseJSON cosigners
+            <*> parseJSON inpsObj
 
 instance EncodeAddress n => ToJSON (ApiBalanceTransactionPostData n) where
-    toJSON (ApiBalanceTransactionPostData sealedTx inps) = object
+    toJSON (ApiBalanceTransactionPostData sealedTx cosigners inps) = object
         [ "transaction" .= object
                 [ "cborHex" .= sealedTxBytesValue @'Base16 (getApiT sealedTx)
                 , "description" .= String ""
                 , "type" .= String "Tx AlonzoEra"
                 ]
+        , "signatories" .= toJSON cosigners
         , "inputs" .= toJSON inps
         ]
 
