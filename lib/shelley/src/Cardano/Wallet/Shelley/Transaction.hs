@@ -137,6 +137,8 @@ import Cardano.Wallet.Transaction
     )
 import Data.Bifunctor
     ( first )
+import Data.ByteArray.Encoding
+    ( Base (..), convertToBase )
 import Data.Function
     ( (&) )
 import Data.Generics.Internal.VL.Lens
@@ -171,7 +173,9 @@ import qualified Cardano.Wallet.Primitive.Types.UTxOIndex as UTxOIndex
 import qualified Cardano.Wallet.Shelley.Compatibility as Compatibility
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Write as CBOR
+import qualified Data.ByteArray as BA
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as B8
 import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
@@ -245,9 +249,14 @@ _mkSignedTransaction networkId stakeCreds resolver keyFrom sealed =
         -> Either ErrSignTx (k 'AddressK XPrv, Passphrase "encryption")
     lookupXPrv txin = case traceShowId (resolver txin) of
         Just addr -> case keyFrom addr of
-            Just cred -> trace "Right" $ Right cred
+            Just cred -> trace ("Right " ++ showCred cred) $ Right cred
             Nothing -> trace "Left" $ Left $ ErrSignTxKeyNotFound addr
         Nothing -> Left $ ErrSignTxAddressUnknown txin
+
+showCred :: WalletKey k => (k 'AddressK XPrv, Passphrase "encryption") -> String
+showCred (ak, pwd) = "(" ++ k ++ ", " ++ B8.unpack (BA.convert pwd) ++ ")"
+  where
+     k = B8.unpack $ convertToBase Base16 $ getRawKey ak
 
 mkSignedShelleyTransaction
     :: forall k era.
