@@ -441,8 +441,8 @@ listPools
     -> Map PoolId PoolDbData
     -> Coin
     -> IO [Api.ApiStakePool]
-listPools ti StakePoolsSummary{params,pools} dbData userStake =
-    traverse mkApiPool $ Map.toList $ scorePools params allPools userStake
+listPools ti StakePoolsSummary{rewardParams,pools} dbData userStake =
+    traverse mkApiPool $ Map.toList $ scorePools rewardParams allPools userStake
   where
     allPools
         = Map.merge lsqButNoDb dbButNoLsq bothPresent pools dbData
@@ -464,7 +464,7 @@ listPools ti StakePoolsSummary{params,pools} dbData userStake =
                     -- their pledge.
                 , ownerStake = ownerStake_
                 , ownerStakeRelative = unsafeMkPercentage 
-                    $ ownerStake_ `proportionTo` (totalStake params)
+                    $ ownerStake_ `proportionTo` (totalStake rewardParams)
                 , cost = poolCost $ registrationCert db
                 , margin = poolMargin $ registrationCert db
                 , performanceEstimate = unsafeMkPercentage 1
@@ -488,7 +488,7 @@ listPools ti StakePoolsSummary{params,pools} dbData userStake =
                 , Api.desirabilityScore = fromIntegral $ unCoin $ _desirability score
                 , Api.relativeStake = Quantity $ stakeRelative pool
                 , Api.ownerStake = Api.coinToQuantity $ ownerStake pool
-                , Api.saturation = poolSaturation params pool
+                , Api.saturation = poolSaturation rewardParams pool
                 , Api.producedBlocks =
                     (fmap fromIntegral . nProducedBlocks) db
                 }

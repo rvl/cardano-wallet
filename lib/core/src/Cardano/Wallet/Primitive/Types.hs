@@ -784,13 +784,13 @@ instance Buildable RewardParams where
 
 -- | Summary of stake distribution and stake pools obtained from network
 data StakePoolsSummary = StakePoolsSummary
-    { params :: RewardParams
-    , pools  :: Map PoolId RewardProvenancePool
+    { rewardParams :: RewardParams
+    , pools :: Map PoolId RewardProvenancePool
     } deriving (Show, Eq)
 
 instance Buildable StakePoolsSummary where
-    build StakePoolsSummary{params,pools} = blockListF' "" id
-        [ "Global reward parameters: " <> build params
+    build StakePoolsSummary{rewardParams,pools} = blockListF' "" id
+        [ "Global reward parameters: " <> build rewardParams
         , "Individual pools: " <> mapF (Map.toList pools)
         ]
 

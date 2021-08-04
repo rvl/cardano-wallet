@@ -796,13 +796,13 @@ mkStakePoolsSummary
     -> W.StakePoolsSummary
 mkStakePoolsSummary SL.PParams{_a0,_nOpt} SL.RewardProvenance{totalStake,pools,r}
   = W.StakePoolsSummary
-    { params = p
+    { rewardParams = rp
     , pools
         = Map.map (fromRewardProvenancePool $ toWalletCoin totalStake)
         $ Map.mapKeys fromPoolId pools
     }
   where
-    p = W.RewardParams 
+    rp = W.RewardParams 
         { nOpt = fromIntegral _nOpt
         , a0   = fromNonNegativeInterval _a0
         , r    = toWalletCoin r
