@@ -44,6 +44,8 @@ module Cardano.Wallet.Primitive.Types.Tx
     , unsafeSealedTxFromBytes
     , SerialisedTx (..)
     , SerialisedTxParts (..)
+    , getSealedTxBody
+    , getSealedTxWitnesses
 
     -- * Functions
     , fromTransactionInfo
@@ -440,6 +442,14 @@ instance NFData SealedTx where
     rnf (SealedTx (InAnyCardanoEra _ tx) bs) = tx' `deepseq` bs `deepseq` ()
       where
         tx' = show tx -- should be good enough
+
+getSealedTxBody :: SealedTx -> InAnyCardanoEra Cardano.TxBody
+getSealedTxBody (SealedTx (InAnyCardanoEra era tx) _) =
+    InAnyCardanoEra era (Cardano.getTxBody tx)
+
+getSealedTxWitnesses :: SealedTx -> [InAnyCardanoEra Cardano.KeyWitness]
+getSealedTxWitnesses (SealedTx (InAnyCardanoEra era tx) _) =
+    [InAnyCardanoEra era w | w <- Cardano.getTxWitnesses tx]
 
 -- | Construct a 'SealedTx' from a "Cardano.Api" transaction.
 sealedTxFromCardano :: InAnyCardanoEra Cardano.Tx -> SealedTx
