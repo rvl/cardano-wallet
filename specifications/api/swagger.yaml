@@ -1457,10 +1457,13 @@ x-stakePoolSaturation: &stakePoolSaturation
   type: number
   minimum: 0
   description: |
-    Saturation-level of the pool based on the desired number `k` of pools aimed for by the network.
+    The saturation of a pool is the ratio of the current `relative_stake`
+    to the equilibrium relative stake of `1/k`.
+    This equilibrium stake appears in the long term,
+    where it is expected that `k` pools attract an equal share of the stake.
     A value above `1` indicates that the pool is oversaturated.
 
-    The saturation is based on the live `relative_stake`. The saturation at the end of epoch e,
+    The saturation at the end of epoch e,
     will affect the rewards paid out at the end of epoch e+3.
 
   example: 0.74
