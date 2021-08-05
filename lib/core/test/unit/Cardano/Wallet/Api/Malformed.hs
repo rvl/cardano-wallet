@@ -1275,31 +1275,28 @@ instance Malformed (BodyParam (ApiBalanceTransactionPostData ('Testnet pm))) whe
     malformed = jsonValid ++ jsonInvalid
      where
          jsonInvalid = first BodyParam <$>
-            [ ("1020344", "Error in $: parsing Cardano.Wallet.Api.Types.ApiBalanceTransactionPostData(ApiBalanceTransactionPostData) failed, expected Object, but encountered Number")
-            , ("\"hello\"", "Error in $: parsing Cardano.Wallet.Api.Types.ApiBalanceTransactionPostData(ApiBalanceTransactionPostData) failed, expected Object, but encountered String")
+            [ ("1020344", "Error in $: parsing ApiBalanceTransactionPostData failed, expected Object, but encountered Number")
+            , ("\"hello\"", "Error in $: parsing ApiBalanceTransactionPostData failed, expected Object, but encountered String")
             , ("{\"transaction\": \"\", \"random\"}", msgJsonInvalid)
-            , ("{\"transaction\": \"lah\"}", "Error in $.transaction: Parse error. Expecting Base64-encoded format.")
-            , ("{\"transaction\": {\"cborHash\": 1020344}}", "Error in $.transaction: parsing 'Base64 ByteString failed, expected String, but encountered Number")
-            , ("{\"transaction\": { \"cborHash\": {\"body\": 1020344 }}}", "Error in $.transaction: parsing 'Base64 ByteString failed, expected String, but encountered Object")
+            , ("{\"transaction\": \"lah\"}", "Error in $.transaction: parsing HashMap ~Text failed, expected Object, but encountered String")
+            , ("{\"transaction\": {\"cborHex\": 1020344},\"signatories\":[],\"inputs\":[]}", "Error in $: parsing 'Base16 ByteString failed, expected String, but encountered Number")
+            , ("{\"transaction\": {\"cborHex\": {\"body\": 1020344 }},\"signatories\":[],\"inputs\":[]}", "Error in $: parsing 'Base16 ByteString failed, expected String, but encountered Object")
             ]
          jsonValid = first (BodyParam . Aeson.encode) <$>
             [
               ( [aesonQQ|
-                { "transaction": { "cborHash" :#{validSealedTxHex} }
+                { "transaction": { "cborHex" :#{validSealedTxBase64} },
+                  "signatories": [],
+                  "inputs": []
                 }|]
-              , "Error in $.transaction: Parse error. Expecting Base64-encoded format."
+              , "Error in $: Parse error. Expecting Base16-encoded format."
               )
             , ( [aesonQQ|
-               { "transaction": "cafecafe",
-                  "extra": "hello"
+               { "transaction": { "cborHex" :#{validSealedTxHex} },
+                 "signatories": ["something"],
+                 "inputs": []
                }|]
-               , "Error in $: parsing Cardano.Wallet.Api.Types.ApiBalanceTransactionPostData(ApiBalanceTransactionPostData) failed, unknown fields: ['extra']"
-              )
-            , ( [aesonQQ|
-               { "transaction": #{validSealedTxBase64},
-                  "extra": "hello"
-               }|]
-               , "Error in $: parsing Cardano.Wallet.Api.Types.ApiBalanceTransactionPostData(ApiBalanceTransactionPostData) failed, unknown fields: ['extra']"
+               , "Error in $[0]: Invalid account public key: expecting a hex-encoded value that is 64 bytes in length."
               )
             ]
 

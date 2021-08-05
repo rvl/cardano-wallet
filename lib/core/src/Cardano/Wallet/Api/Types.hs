@@ -302,8 +302,6 @@ import Cardano.Wallet.Primitive.Types.Hash
     ( Hash (..) )
 import Cardano.Wallet.Primitive.Types.TokenMap
     ( fromNestedList, toNestedMap )
-import Cardano.Wallet.Primitive.Types.TokenPolicy
-    ( TokenName (..), unTokenName )
 import Cardano.Wallet.Primitive.Types.TokenQuantity
     ( TokenQuantity (..) )
 import Cardano.Wallet.Primitive.Types.Tx
@@ -966,7 +964,7 @@ data ApiTxIn = ApiTxIn
     } deriving (Eq, Generic, Show)
       deriving anyclass NFData
 
-data ApiTxOut n = ApiTxOut
+data ApiTxOut (n :: NetworkDiscriminant) = ApiTxOut
     { address :: !(ApiT Address, Proxy n)
     , datum :: !(Maybe (ApiT (Hash "Datum")))
     , amount :: !(Quantity "lovelace" Natural)
@@ -974,7 +972,7 @@ data ApiTxOut n = ApiTxOut
     } deriving (Eq, Generic, Show)
       deriving anyclass NFData
 
-data ApiExternalInput n = ApiExternalInput
+data ApiExternalInput (n :: NetworkDiscriminant) = ApiExternalInput
     { txIn :: !ApiTxIn
     , txOut :: !(ApiTxOut n)
     } deriving (Eq, Generic, Show)
@@ -2705,7 +2703,8 @@ instance EncodeAddress n => ToJSON (ApiTxOut n) where
             , "value" .= object (["lovelace" .= toJSON amt] ++ tokens)
             ]
         tokenPair (name, (TokenQuantity quantity)) =
-            [T.decodeLatin1 (unTokenName name) .= toJSON quantity]
+            let (String txt) = toJSON name
+            in [txt .= toJSON quantity]
         addEntry policyId tokens' acc = acc ++
             [ toText policyId .= object (concatMap tokenPair (NE.toList $ NEMap.toList tokens')) ]
         tokens = Map.foldrWithKey addEntry [] $ toNestedMap assets'
@@ -2727,7 +2726,7 @@ instance DecodeAddress n => FromJSON (ApiBalanceTransactionPostData n) where
         sealedTx <- parseSealedTxBytes @'Base16 cbor
         inpsObj <- o .: "inputs"
         ApiBalanceTransactionPostData (ApiT sealedTx)
-            <$> parseJSON cosigners
+            <$> parseJSON @[ApiAccountPublicKey] cosigners
             <*> parseJSON inpsObj
 
 instance EncodeAddress n => ToJSON (ApiBalanceTransactionPostData n) where

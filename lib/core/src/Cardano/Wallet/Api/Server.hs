@@ -1993,8 +1993,7 @@ balanceTransaction
         ( ctx ~ ApiLayer s k
         , IsOwned s k
         , WalletKey k
-        , Typeable s
-        , Typeable n
+        , GetRewardAccount s k
         , HardDerivation k
         , GenChange s
         , Bounded (Index (AddressIndexDerivationType k) 'AddressK)

@@ -500,6 +500,9 @@ spec = parallel $ do
             jsonRoundtripAndGolden $ Proxy @ApiMultiDelegationAction
             jsonRoundtripAndGolden $ Proxy @ApiSignTransactionPostData
             jsonRoundtripAndGolden $ Proxy @(ApiBalanceTransactionPostData ('Testnet 0))
+            jsonRoundtripAndGolden $ Proxy @(ApiTxOut ('Testnet 0))
+            jsonRoundtripAndGolden $ Proxy @(ApiExternalInput ('Testnet 0))
+            jsonRoundtripAndGolden $ Proxy @ApiTxIn
             jsonRoundtripAndGolden $ Proxy @ApiSignedTransaction
             jsonRoundtripAndGolden $ Proxy @(PostTransactionOldData ('Testnet 0))
             jsonRoundtripAndGolden $ Proxy @(PostTransactionFeeOldData ('Testnet 0))
@@ -1950,7 +1953,7 @@ instance Arbitrary (ApiTxOut n) where
 instance Arbitrary ApiTxIn where
     arbitrary = ApiTxIn
         <$> arbitrary
-        <*> choose (0, 256)
+        <*> choose (0, 255)
 
 instance Arbitrary (ApiExternalInput n) where
     arbitrary = ApiExternalInput
@@ -2523,6 +2526,9 @@ instance ToSchema ApiTxMetadata where
 
 instance ToSchema ApiSignTransactionPostData where
     declareNamedSchema _ = declareSchemaForDefinition "ApiSignTransactionPostData"
+
+instance Typeable n => ToSchema (ApiExternalInput n) where
+    declareNamedSchema _ = declareSchemaForDefinition "ApiExternalInput"
 
 instance Typeable n => ToSchema (ApiBalanceTransactionPostData n) where
     declareNamedSchema _ = declareSchemaForDefinition "ApiBalanceTransactionPostData"

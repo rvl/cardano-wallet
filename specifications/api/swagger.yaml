@@ -282,7 +282,7 @@ x-txInNode: &txInNode
   type: string
   pattern: "^[0-9abcdef]+#[0-9]+$"
   minLength: 66
-  maxLength: 67
+  maxLength: 68
   example: 2f8cd2ef706e5500307636b8477198ee2f204c4181b53c507f46d195140493cb#1
 
 x-dataHash: &dataHash
