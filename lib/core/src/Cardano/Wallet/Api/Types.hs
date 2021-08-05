@@ -980,7 +980,7 @@ data ApiExternalInput n = ApiExternalInput
     } deriving (Eq, Generic, Show)
       deriving anyclass NFData
 
-data ApiBalanceTransactionPostData n = ApiBalanceTransactionPostData
+data ApiBalanceTransactionPostData (n :: NetworkDiscriminant) = ApiBalanceTransactionPostData
     { transaction :: !(ApiT SealedTx)
     , signatories :: ![ApiAccountPublicKey]
     , inputs :: ![ApiExternalInput n]

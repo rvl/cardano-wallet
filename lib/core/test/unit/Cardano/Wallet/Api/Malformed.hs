@@ -1271,7 +1271,7 @@ instance Malformed (BodyParam ApiSignTransactionPostData) where
               )
             ]
 
-instance Malformed (BodyParam ApiBalanceTransactionPostData) where
+instance Malformed (BodyParam (ApiBalanceTransactionPostData ('Testnet pm))) where
     malformed = jsonValid ++ jsonInvalid
      where
          jsonInvalid = first BodyParam <$>
@@ -1279,13 +1279,13 @@ instance Malformed (BodyParam ApiBalanceTransactionPostData) where
             , ("\"hello\"", "Error in $: parsing Cardano.Wallet.Api.Types.ApiBalanceTransactionPostData(ApiBalanceTransactionPostData) failed, expected Object, but encountered String")
             , ("{\"transaction\": \"\", \"random\"}", msgJsonInvalid)
             , ("{\"transaction\": \"lah\"}", "Error in $.transaction: Parse error. Expecting Base64-encoded format.")
-            , ("{\"transaction\": 1020344}", "Error in $.transaction: parsing 'Base64 ByteString failed, expected String, but encountered Number")
-            , ("{\"transaction\": { \"body\": 1020344 }}", "Error in $.transaction: parsing 'Base64 ByteString failed, expected String, but encountered Object")
+            , ("{\"transaction\": {\"cborHash\": 1020344}}", "Error in $.transaction: parsing 'Base64 ByteString failed, expected String, but encountered Number")
+            , ("{\"transaction\": { \"cborHash\": {\"body\": 1020344 }}}", "Error in $.transaction: parsing 'Base64 ByteString failed, expected String, but encountered Object")
             ]
          jsonValid = first (BodyParam . Aeson.encode) <$>
             [
               ( [aesonQQ|
-                { "transaction": #{validSealedTxHex}
+                { "transaction": { "cborHash" :#{validSealedTxHex} }
                 }|]
               , "Error in $.transaction: Parse error. Expecting Base64-encoded format."
               )
