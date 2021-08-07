@@ -209,6 +209,7 @@ import Cardano.Wallet.Api.Types
     , ApiEpochInfo (ApiEpochInfo)
     , ApiEra (..)
     , ApiErrorCode (..)
+    , ApiExternalInput (..)
     , ApiFee (..)
     , ApiForeignStakeKey (..)
     , ApiMintedBurnedTransaction (..)
@@ -241,6 +242,7 @@ import Cardano.Wallet.Api.Types
     , ApiTxId (..)
     , ApiTxInput (..)
     , ApiTxMetadata (..)
+    , ApiTxOut (..)
     , ApiUtxoStatistics (..)
     , ApiWallet (..)
     , ApiWalletAssetsBalance (..)
@@ -405,7 +407,7 @@ import Cardano.Wallet.Primitive.Types
 import Cardano.Wallet.Primitive.Types.Address
     ( Address (..), AddressState (..) )
 import Cardano.Wallet.Primitive.Types.Coin
-    ( Coin (..), coinQuantity )
+    ( Coin (..), coinQuantity, sumCoins )
 import Cardano.Wallet.Primitive.Types.Hash
     ( Hash (..) )
 import Cardano.Wallet.Primitive.Types.TokenBundle
@@ -588,6 +590,8 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Network.Wai.Handler.Warp as Warp
 import qualified Network.Wai.Handler.WarpTLS as Warp
+
+import qualified Debug.Trace as TR
 
 -- | How the server should listen for incoming requests.
 data Listen
@@ -2005,11 +2009,21 @@ balanceTransaction
     -> ApiBalanceTransactionPostData n
     -> Handler (ApiConstructTransaction n)
 balanceTransaction _ ctx genChange (ApiT wid) body =
-    constructTransaction ctx genChange (ApiT wid) $
+    if areOutputsCovered tx then
+        pure $ toApiConstructTransaction tx
+    else
+        constructTransaction ctx genChange (ApiT wid) $
         toApiConstructTransactionData tx
   where
+    toApiConstructTransaction (Tx _ feeM _inps _outs _ mdM) =
+        let sel = undefined
+        in ApiConstructTransaction
+            { transaction = ApiT sealedTxIncoming
+            , coinSelection = mkApiCoinSelection [] Nothing mdM sel
+            , fee = fromMaybe (Quantity 0) (Quantity . fromIntegral . unCoin <$> feeM)
+            }
     toApiConstructTransactionData (Tx _ _ _ outs wdrlM mdM) = ApiConstructTransactionData
-        { payments = toApiPaymentDesination outs
+        { payments = toApiPaymentDesination outs --TODO in ADP-656 - I need to decrease by inputs already present?
         , withdrawal = toApiWdrl wdrlM
         , metadata = ApiT <$> mdM
         , mint = Nothing
@@ -2017,7 +2031,7 @@ balanceTransaction _ ctx genChange (ApiT wid) body =
         , validityInterval = Nothing
         }
     toApiWdrl :: Map RewardAccount Coin -> Maybe ApiWithdrawalPostData
-    toApiWdrl _ = Nothing --TODO in the ADP-656
+    toApiWdrl _ = Nothing --TODO in ADP-656 - I need to lookup the wallet rewardAcct against this map?
     toApiPaymentDesination = \case
         [] -> Nothing
         txouts -> Just $ ApiPaymentAddresses $ NE.fromList $ toAddressAmount <$> txouts
@@ -2028,7 +2042,15 @@ balanceTransaction _ ctx genChange (ApiT wid) body =
         , assets = ApiT tokenMap
         }
 
-    tx = decodeSignedTx tl (body ^. #transaction . #getApiT)
+    areOutputsCovered tx@(Tx _ feeM _ outs _ _) = -- TODO in ADP-656 is it correct- double check
+        (Coin $ fromIntegral appliedTxOut) ==
+        sumCoins [fromMaybe (Coin 0) feeM, sumCoins $ txOutCoin <$> outs]
+
+    apiExternalInps = body ^. #inputs
+    getAmtFromExternalInps (ApiExternalInput _ (ApiTxOut _ _ (Quantity amt) _)) = amt
+    appliedTxOut = sum $ getAmtFromExternalInps <$> apiExternalInps
+    sealedTxIncoming = body ^. #transaction . #getApiT
+    tx = decodeSignedTx tl sealedTxIncoming
     tl = ctx ^. W.transactionLayer @k
 
 constructTransaction

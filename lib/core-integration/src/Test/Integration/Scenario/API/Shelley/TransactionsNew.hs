@@ -760,6 +760,17 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
         let initialAmt = minUTxOValue (_mainEra ctx)
         wa <- fixtureWalletWith @n ctx [initialAmt]
 
+
+        -- the tx involes two outputs :
+        -- 999978
+        -- 999978
+        -- results in two changes
+        -- 49998927722
+        -- 49998927722
+        -- incurs the fee of
+        -- 144600
+        -- and involves one input
+        -- 100000000000
         let serializedTx =
                 "84a600818258200eaa33be8780935ca5a7c1e628a2d54402446f96236c\
                 \a8f1770e07fa22ba8648000d80018482583901a65f0e7aea387adbc109\
@@ -779,7 +790,7 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
               "inputs": [
                   { "txIn" : "0eaa33be8780935ca5a7c1e628a2d54402446f96236ca8f1770e07fa22ba8648#0"
                   , "txOut" :
-                      { "value" : { "lovelace": "100000000000" }
+                      { "value" : { "lovelace": 100000000000 }
                       , "address": "addr1vx0d0kyppx3qls8laq5jvpq0qa52d0gahm8tsyj2jpg0lpg4ue9lt"
                       }
                   }]
@@ -794,6 +805,7 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
     it "TRANS_NEW_BALANCE_01b - single-output transaction with missing covering inputs" $ \ctx -> runResourceT $ do
         -- constructing source wallet
         let initialAmt = 5 * minUTxOValue (_mainEra ctx)
+        let inpAmt = minUTxOValue (_mainEra ctx)
         wa <- fixtureWalletWith @n ctx [initialAmt]
 
         let serializedTx =
@@ -810,7 +822,7 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
               "inputs": [
                   { "txIn" : "0eaa33be8780935ca5a7c1e628a2d54402446f96236ca8f1770e07fa22ba8648#13"
                   , "txOut" :
-                      { "value" : { "lovelace": "100000000000" }
+                      { "value" : { "lovelace": #{inpAmt} }
                       , "address": "addr1vxtlefx3dd5ga5d3cqcfycxsc5tv20txpx7qlmlt2kwnfds2mywcr"
                       }
                   }]

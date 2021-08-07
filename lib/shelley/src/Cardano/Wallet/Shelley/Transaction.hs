@@ -18,9 +18,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 
-{-# LANGUAGE PackageImports #-}
-{-# LANGUAGE QuasiQuotes #-}
-
 -- |
 -- Copyright: © 2020 IOHK
 -- License: Apache-2.0
