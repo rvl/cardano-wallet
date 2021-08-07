@@ -2013,8 +2013,11 @@ balanceTransaction _ ctx genChange (ApiT wid) body =
         constructTransaction ctx genChange (ApiT wid) $
         toApiConstructTransactionData tx
   where
-    toApiConstructTransaction (Tx _ feeM _inps _outs _ mdM) =
-        let sel = undefined --TODO in ADP-656
+    toApiConstructTransaction (Tx _ feeM inps _outs _ mdM) =
+        let addr = Address "a\151\252\164\209kh\142\209\177\192\&0\146`\208\197\SYN\197=f\t\188\SI\239\235U\157\&4\182"
+            inps' = map (\(txin,_) -> (txin, TxOut addr TokenBundle.empty, DerivationIndex 0 :| [] )) inps
+            sel = UnsignedTx (NE.fromList inps') [] [] []
+            --TODO in ADP-656 we will need to add a way to check txIn and get txOut and derivation path if it is ours
         in ApiConstructTransaction
             { transaction = ApiT sealedTxIncoming
             , coinSelection = mkApiCoinSelection [] Nothing mdM sel
