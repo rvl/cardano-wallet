@@ -41,10 +41,14 @@ import Cardano.Wallet.Primitive.AddressDerivation.Icarus
     ( IcarusKey )
 import Cardano.Wallet.Primitive.Types.Address
     ( Address (..) )
+import Cardano.Wallet.Primitive.Types.Tx
+    ( unsafeSealedTxFromBytes )
 import Control.Monad.IO.Unlift
     ( MonadIO (..), MonadUnliftIO (..), liftIO )
 import Control.Monad.Trans.Resource
     ( runResourceT )
+import Data.ByteArray.Encoding
+    ( Base (..), convertFromBase )
 import Data.Generics.Internal.VL.Lens
     ( view, (^.) )
 import Data.Maybe
@@ -101,6 +105,7 @@ import qualified Cardano.Wallet.Api.Link as Link
 import qualified Cardano.Wallet.Primitive.Types.TokenMap as W
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Network.HTTP.Types.Status as HTTP
 
 spec :: forall n.
@@ -760,7 +765,6 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
         let initialAmt = minUTxOValue (_mainEra ctx)
         wa <- fixtureWalletWith @n ctx [initialAmt]
 
-
         -- the tx involes two outputs :
         -- 999978
         -- 999978
@@ -771,7 +775,7 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
         -- 144600
         -- and involves one input
         -- 100000000000
-        let serializedTx =
+        let serializedTxHex =
                 "84a600818258200eaa33be8780935ca5a7c1e628a2d54402446f96236c\
                 \a8f1770e07fa22ba8648000d80018482583901a65f0e7aea387adbc109\
                 \123a571cfd8d0d139739d359caaf966aa5b9a062de6ec013404d4f9909\
@@ -784,8 +788,11 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
                 \2b143b1ce1b68ccb62f8e8437b3089fc61d21ddfcbd4d43652bf05c40c\
                 \346fa794871423b65052d7614c1b0000000ba42b176a021a000234d803\
                 \198ceb0e80a0f5f6" :: Text
+        let sealedTx =
+                let (Right bs) = convertFromBase Base16 $ T.encodeUtf8 serializedTxHex
+                in unsafeSealedTxFromBytes bs
         let balancePayload = Json [json|{
-              "transaction": { "cborHex" : #{serializedTx}, "description": "", "type": "Tx AlonzoEra" },
+              "transaction": { "cborHex" : #{serializedTxHex}, "description": "", "type": "Tx AlonzoEra" },
               "signatories": [],
               "inputs": [
                   { "txIn" : "0eaa33be8780935ca5a7c1e628a2d54402446f96236ca8f1770e07fa22ba8648#0"
@@ -801,10 +808,12 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
             [ expectSuccess
             , expectResponseCode HTTP.status202
             , expectField (#coinSelection . #inputs) (`shouldSatisfy` (not . null))
+            , expectField #transaction (`shouldBe` (ApiT sealedTx))
             ]
+
     it "TRANS_NEW_BALANCE_01b - single-output transaction with missing covering inputs" $ \ctx -> runResourceT $ do
         -- constructing source wallet
-        let initialAmt = 5 * minUTxOValue (_mainEra ctx)
+        let initialAmt = 110_000_000_000
         let inpAmt = minUTxOValue (_mainEra ctx)
         wa <- fixtureWalletWith @n ctx [initialAmt]
 

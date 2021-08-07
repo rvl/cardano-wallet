@@ -591,8 +591,6 @@ import qualified Data.Text.Encoding as T
 import qualified Network.Wai.Handler.Warp as Warp
 import qualified Network.Wai.Handler.WarpTLS as Warp
 
-import qualified Debug.Trace as TR
-
 -- | How the server should listen for incoming requests.
 data Listen
     = ListenOnPort Port
@@ -2016,7 +2014,7 @@ balanceTransaction _ ctx genChange (ApiT wid) body =
         toApiConstructTransactionData tx
   where
     toApiConstructTransaction (Tx _ feeM _inps _outs _ mdM) =
-        let sel = undefined
+        let sel = undefined --TODO in ADP-656
         in ApiConstructTransaction
             { transaction = ApiT sealedTxIncoming
             , coinSelection = mkApiCoinSelection [] Nothing mdM sel
@@ -2042,7 +2040,7 @@ balanceTransaction _ ctx genChange (ApiT wid) body =
         , assets = ApiT tokenMap
         }
 
-    areOutputsCovered tx@(Tx _ feeM _ outs _ _) = -- TODO in ADP-656 is it correct- double check
+    areOutputsCovered (Tx _ feeM _ outs _ _) = -- TODO in ADP-656 is it correct- double check
         (Coin $ fromIntegral appliedTxOut) ==
         sumCoins [fromMaybe (Coin 0) feeM, sumCoins $ txOutCoin <$> outs]
 
