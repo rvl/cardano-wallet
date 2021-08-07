@@ -755,20 +755,65 @@ spec = describe "NEW_SHELLEY_TRANSACTIONS" $ do
   -- update with sign / submit tx where applicable
   -- end to end join pool and get rewards
 
-    it "TRANS_NEW_BALANCE_01a - Single Output Transaction with input added" $ \ctx -> runResourceT $ do
+    it "TRANS_NEW_BALANCE_01a - multiple-output transaction with all covering inputs present" $ \ctx -> runResourceT $ do
         -- constructing source wallet
-        let initialAmt = 10*minUTxOValue (_mainEra ctx)
+        let initialAmt = minUTxOValue (_mainEra ctx)
         wa <- fixtureWalletWith @n ctx [initialAmt]
 
-        -- balancing tx. The below one was generated within
-        -- "TRANS_NEW_CREATE_04a - Single Output Transaction"
         let serializedTx =
-                "g6QAgYJYILuLKMKshw+fVtm/SBOt30A3OIFkQyqgVGZATSCJkz4+AAGCglg5ASk\
-                \I+0eBpCKvu7iF1Kx76o85LJ8j0sTUfzygXsUTHB3HRwIrQU6iz6UOAyjYiUz4/S\
-                \A361AHbcLlGgAPQkCCWDkBa/q+bfP3jC/CrqPfzKQoL9vkkQmX4auMHzW+5ltV6\
-                \UGP7ox+RMlTTUKqGzs49bSYX4in1FEU6zkaAByEyAIaAAH/uAMZjSeg9g==" :: Text
+                "84a600818258200eaa33be8780935ca5a7c1e628a2d54402446f96236c\
+                \a8f1770e07fa22ba8648000d80018482583901a65f0e7aea387adbc109\
+                \123a571cfd8d0d139739d359caaf966aa5b9a062de6ec013404d4f9909\
+                \877d452fc57dfe4f8b67f94e0ea1e8a0ba1a000f422a82583901ac9a56\
+                \280ec283eb7e12146726bfe68dcd69c7a85123ce2f7a10e7afa062de6e\
+                \c013404d4f9909877d452fc57dfe4f8b67f94e0ea1e8a0ba1a000f422a\
+                \825839011a2f2f103b895dbe7388acc9cc10f90dc4ada53f46c841d2ac\
+                \44630789fc61d21ddfcbd4d43652bf05c40c346fa794871423b65052d7\
+                \614c1b0000000ba42b176a82583901c59701fee28ad31559870ecd6ea9\
+                \2b143b1ce1b68ccb62f8e8437b3089fc61d21ddfcbd4d43652bf05c40c\
+                \346fa794871423b65052d7614c1b0000000ba42b176a021a000234d803\
+                \198ceb0e80a0f5f6" :: Text
         let balancePayload = Json [json|{
-              "transaction": #{serializedTx}
+              "transaction": { "cborHex" : #{serializedTx}, "description": "", "type": "Tx AlonzoEra" },
+              "signatories": [],
+              "inputs": [
+                  { "txIn" : "0eaa33be8780935ca5a7c1e628a2d54402446f96236ca8f1770e07fa22ba8648#0"
+                  , "txOut" :
+                      { "value" : { "lovelace": "100000000000" }
+                      , "address": "addr1vx0d0kyppx3qls8laq5jvpq0qa52d0gahm8tsyj2jpg0lpg4ue9lt"
+                      }
+                  }]
+          }|]
+        rTx <- request @(ApiConstructTransaction n) ctx
+            (Link.balanceTransaction @'Shelley wa) Default balancePayload
+        verify rTx
+            [ expectSuccess
+            , expectResponseCode HTTP.status202
+            , expectField (#coinSelection . #inputs) (`shouldSatisfy` (not . null))
+            ]
+    it "TRANS_NEW_BALANCE_01b - single-output transaction with missing covering inputs" $ \ctx -> runResourceT $ do
+        -- constructing source wallet
+        let initialAmt = 5 * minUTxOValue (_mainEra ctx)
+        wa <- fixtureWalletWith @n ctx [initialAmt]
+
+        let serializedTx =
+                "84a600818258200eaa33be8780935ca5a7c1e628a2d54402446f96236ca8f1\
+                \770e07fa22ba86480d0d800182825839010acce4f85ade867308f048fe4516\
+                \c0383b38cc04602ea6f7a6a1e75f29450899547b0e4bb194132452d45fea30\
+                \212aebeafc69bca8744ea61a002dc67e8258390110a9b4666ba80e4878491d\
+                \1ac20465c9893a8df5581dc705770626203d4d23fe6a7acdda5a1b41f56100\
+                \f02bfa270a3c560c4e55cf8312331b00000017484721ca021a0001ffb80319\
+                \8d280e80a0f5f6" :: Text
+        let balancePayload = Json [json|{
+              "transaction": { "cborHex" : #{serializedTx}, "description": "", "type": "Tx AlonzoEra" },
+              "signatories": [],
+              "inputs": [
+                  { "txIn" : "0eaa33be8780935ca5a7c1e628a2d54402446f96236ca8f1770e07fa22ba8648#13"
+                  , "txOut" :
+                      { "value" : { "lovelace": "100000000000" }
+                      , "address": "addr1vxtlefx3dd5ga5d3cqcfycxsc5tv20txpx7qlmlt2kwnfds2mywcr"
+                      }
+                  }]
           }|]
         rTx <- request @(ApiConstructTransaction n) ctx
             (Link.balanceTransaction @'Shelley wa) Default balancePayload

@@ -308,7 +308,7 @@ spec = describe "SHELLEY_TRANSACTIONS" $ do
         let initialAmt = 3 * minUTxOValue (_mainEra ctx)
         wa <- fixtureWalletWith @n ctx [initialAmt]
         wb <- fixtureWalletWith @n ctx [initialAmt]
-        let amt = minUTxOValue (_mainEra ctx) :: Natural
+        let amt = 5 * minUTxOValue (_mainEra ctx) :: Natural
 
         payload <- liftIO $ mkTxPayload ctx wb amt fixturePassphrase
 

@@ -18,6 +18,9 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 
+{-# LANGUAGE PackageImports #-}
+{-# LANGUAGE QuasiQuotes #-}
+
 -- |
 -- Copyright: © 2020 IOHK
 -- License: Apache-2.0
@@ -181,6 +184,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
+
 
 -- | Type encapsulating what we need to know to add things -- payloads,
 -- certificates -- to a transaction.

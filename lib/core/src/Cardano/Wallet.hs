@@ -504,12 +504,6 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
-{--
-import Data.ByteArray.Encoding
-    ( Base (..), convertToBase )
-import qualified Data.Text.Encoding as T
-import qualified Debug.Trace as TR
---}
 
 -- $Development
 -- __Naming Conventions__
