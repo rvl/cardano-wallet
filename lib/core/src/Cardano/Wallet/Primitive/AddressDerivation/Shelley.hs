@@ -402,10 +402,9 @@ toRewardAccountRaw :: XPub -> RewardAccount
 toRewardAccountRaw = RewardAccount . blake2b224 . xpubPublicKey
 
 instance GetRewardAccount (SeqState n ShelleyKey) ShelleyKey where
-    getRewardAccount s = Just (k, acct, path)
+    getRewardAccount s = Just (path, (k, toRewardAccount k))
       where
           k = rewardAccountKey s
-          acct = toRewardAccount k
           path = stakeDerivationPath $ derivationPrefix s
 
 {-------------------------------------------------------------------------------

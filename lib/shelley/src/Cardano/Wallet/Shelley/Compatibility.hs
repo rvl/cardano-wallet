@@ -78,6 +78,7 @@ module Cardano.Wallet.Shelley.Compatibility
     , toCardanoValue
     , fromCardanoValue
     , rewardAccountFromAddress
+    , rewardAccountFromStakeAddress
     , fromShelleyPParams
     , fromShelleyTxId
     , fromAlonzoPParams
@@ -132,8 +133,6 @@ import Prelude
 
 import Cardano.Address
     ( unsafeMkAddress )
-import Cardano.Address.Derivation
-    ( XPub, xpubPublicKey )
 import Cardano.Api
     ( AllegraEra
     , AlonzoEra
@@ -197,8 +196,6 @@ import Control.Arrow
     ( left )
 import Control.Monad
     ( when, (>=>) )
-import Crypto.Hash.Utils
-    ( blake2b224 )
 import Data.Bifunctor
     ( bimap )
 import Data.Binary.Get
@@ -316,7 +313,6 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.ByteString.Short as SBS
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text.Encoding as T
@@ -1167,7 +1163,7 @@ toCardanoStakeCredential = Cardano.StakeCredentialByKey
     . Cardano.StakeKeyHash
     . SL.KeyHash
     . UnsafeHash
-    . SBS.toShort
+    . toShort
     . W.unRewardAccount
 
 toCardanoLovelace :: W.Coin -> Cardano.Lovelace
@@ -1272,35 +1268,21 @@ toStakeCredential :: W.RewardAccount -> SL.StakeCredential crypto
 toStakeCredential = SL.KeyHashObj
     . SL.KeyHash . UnsafeHash . toShort . W.unRewardAccount
 
-toStakeKeyDeregCert :: XPub -> Cardano.Certificate
+toStakeKeyDeregCert :: W.RewardAccount -> Cardano.Certificate
 toStakeKeyDeregCert = Cardano.makeStakeAddressDeregistrationCertificate
-    . Cardano.StakeCredentialByKey
-    . Cardano.StakeKeyHash
-    . SL.KeyHash
-    . UnsafeHash
-    . toShort
-    . blake2b224
-    . xpubPublicKey
+    . toCardanoStakeCredential
 
-toStakeKeyRegCert :: XPub -> Cardano.Certificate
+toStakeKeyRegCert :: W.RewardAccount -> Cardano.Certificate
 toStakeKeyRegCert = Cardano.makeStakeAddressRegistrationCertificate
-    . Cardano.StakeCredentialByKey
-    . Cardano.StakeKeyHash
-    . SL.KeyHash
-    . UnsafeHash
-    . toShort
-    . blake2b224
-    . xpubPublicKey
+    . toCardanoStakeCredential
 
-toStakePoolDlgCert :: XPub -> W.PoolId -> Cardano.Certificate
-toStakePoolDlgCert xpub (W.PoolId pid) =
+toStakePoolDlgCert :: W.RewardAccount -> W.PoolId -> Cardano.Certificate
+toStakePoolDlgCert rewardAcct (W.PoolId pid) =
     Cardano.makeStakeAddressDelegationCertificate
-        (Cardano.StakeCredentialByKey $ Cardano.StakeKeyHash cred)
+        (toCardanoStakeCredential rewardAcct)
         (Cardano.StakePoolKeyHash pool)
   where
-    cred = SL.KeyHash $ UnsafeHash $ toShort $ blake2b224 $ xpubPublicKey xpub
     pool = SL.KeyHash $ UnsafeHash $ toShort pid
-
 
 -- | Extract a stake reference / `RewardAccount` from an address, if it exists.
 --
@@ -1320,6 +1302,13 @@ rewardAccountFromAddress (W.Address bytes) = refToAccount . ref =<< parseAddr by
     refToAccount (SL.StakeRefPtr _) = Nothing
     refToAccount SL.StakeRefNull = Nothing
 
+rewardAccountFromStakeAddress :: Cardano.StakeAddress -> W.RewardAccount
+rewardAccountFromStakeAddress (Cardano.StakeAddress _net cred) =
+    case Cardano.fromShelleyStakeCredential cred of
+        Cardano.StakeCredentialByKey keyHash ->
+            W.RewardAccount $ Cardano.serialiseToRawBytes keyHash
+        Cardano.StakeCredentialByScript scriptHash ->
+            W.RewardAccount $ Cardano.serialiseToRawBytes scriptHash
 
 -- | Converts 'SealedTx' to something that can be submitted with the
 -- 'Cardano.Api' local tx submission client.

@@ -79,6 +79,7 @@ module Cardano.Wallet
     , checkWalletIntegrity
     , readNextWithdrawal
     , readRewardAccount
+    , readRewardAccountDerivation
     , someRewardAccount
     , queryRewardBalance
     , ErrWalletAlreadyExists (..)
@@ -466,8 +467,6 @@ import Data.Text.Class
     ( ToText (..) )
 import Data.Time.Clock
     ( NominalDiffTime, UTCTime )
-import Data.Tuple.Extra
-    ( fst3 )
 import Data.Void
     ( Void )
 import Data.Word
@@ -1027,21 +1026,32 @@ readNextWithdrawal ctx (Coin withdrawal) = do
         dummyPath =
             DerivationIndex 0 :| []
 
+readRewardAccountDerivation
+    :: forall ctx s k.
+        ( HasDBLayer IO s k ctx
+        , GetRewardAccount s k
+        )
+    => ctx
+    -> WalletId
+    -> ExceptT ErrNoSuchWallet IO (Maybe (NonEmpty DerivationIndex, (k 'AddressK XPub, RewardAccount)))
+readRewardAccountDerivation ctx wid = db & \DBLayer{..} ->
+    fmap (getRewardAccount @s @k . getState) $
+    mapExceptT atomically $
+    withNoSuchWallet wid $
+    readCheckpoint wid
+  where
+    db = ctx ^. dbLayer @IO @s @k
+
 readRewardAccount
     :: forall ctx s k.
         ( HasDBLayer IO s k ctx
         , GetRewardAccount s k
-        , WalletKey k
         )
     => ctx
     -> WalletId
-    -> ExceptT ErrNoSuchWallet IO (Maybe (XPub, RewardAccount, NonEmpty DerivationIndex))
-readRewardAccount ctx wid = db & \DBLayer{..} -> do
-    cp <- mapExceptT atomically $ withNoSuchWallet wid $ readCheckpoint wid
-    pure $ raw <$> getRewardAccount @s @k (getState cp)
-  where
-    raw (vk, acct, path) = (getRawKey vk, acct, path)
-    db = ctx ^. dbLayer @IO @s @k
+    -> ExceptT ErrNoSuchWallet IO (Maybe RewardAccount)
+readRewardAccount ctx wid = fmap (snd . snd) <$>
+    readRewardAccountDerivation @_ @s @k ctx wid
 
 -- | Query the node for the reward balance of a given wallet.
 --
@@ -1065,7 +1075,6 @@ manageRewardBalance
         , HasNetworkLayer IO ctx
         , HasDBLayer IO s k ctx
         , GetRewardAccount s k
-        , WalletKey k
         )
     => ctx
     -> WalletId
@@ -1075,7 +1084,7 @@ manageRewardBalance ctx wid = db & \DBLayer{..} -> do
          traceWith tr $ MsgRewardBalanceQuery bh
          ra <- runExceptT (readRewardAccount @ctx @s @k ctx wid)
          res <- case ra of
-             Right (Just (_, acct, _)) ->
+             Right (Just acct) ->
                  Right <$> getCachedRewardAccountBalance acct
              Right Nothing -> pure $ Left $
                  ErrFetchRewardsReadRewardAccount ErrReadRewardAccountNotAShelleyWallet
@@ -1519,6 +1528,7 @@ signTransaction
         ( HasTransactionLayer k ctx
         , HasDBLayer IO s k ctx
         , IsOwned s k
+        , GetRewardAccount s k
         )
     => ctx
     -> WalletId
@@ -1541,6 +1551,7 @@ withKeyStore
     :: forall ctx s k a.
         ( HasDBLayer IO s k ctx
         , IsOwned s k
+        , GetRewardAccount s k
         )
     => ctx
     -> WalletId
@@ -1550,15 +1561,18 @@ withKeyStore
     -> (SignTransactionKeyStore (k 'AddressK XPrv) -> IO a)
     -> ExceptT ErrWitnessTx IO a
 withKeyStore ctx wid mkRwdAcct pwd action = do
-    (adState, utxo) <- withExceptT ErrWitnessTxNoSuchWallet $ do
+    (adState, utxo, rewardAcct) <- withExceptT ErrWitnessTxNoSuchWallet $ do
         (cp, _, pending) <- readWallet @ctx @s @k ctx wid
-        pure (getState cp, totalUTxO @s pending cp)
+        rewardAcct <- readRewardAccount @ctx @s @k ctx wid
+        pure (getState cp, totalUTxO @s pending cp, rewardAcct)
 
     let resolver txin = view #address <$> Map.lookup txin (getUTxO utxo)
 
     withRootKey @_ @s ctx wid pwd ErrWitnessTxWithRootKey $ \xprv scheme -> do
         let pwdP = preparePassphrase scheme pwd
-        let stakeCreds = uncurry DecryptedSigningKey <$> mkRwdAcct (xprv, pwdP)
+        let stakeCreds acct = if Just acct == rewardAcct
+                then uncurry DecryptedSigningKey <$> mkRwdAcct (xprv, pwdP)
+                else Nothing
         let keyFrom = fmap (uncurry DecryptedSigningKey) . isOwned adState (xprv, pwdP)
         liftIO $ action $ SignTransactionKeyStore{stakeCreds,resolver,keyFrom}
 
@@ -1575,7 +1589,6 @@ buildAndSignTransaction
         , HasNetworkLayer IO ctx
         , IsOwned s k
         , GetRewardAccount s k
-        , WalletKey k
         )
     => ctx
     -> WalletId
@@ -1627,7 +1640,6 @@ constructTransaction
         , HasDBLayer IO s k ctx
         , HasNetworkLayer IO ctx
         , GetRewardAccount s k
-        , WalletKey k
         )
     => ctx
     -> WalletId
@@ -1635,11 +1647,11 @@ constructTransaction
     -> SelectionResult TxOut
     -> ExceptT ErrConstructTx IO SealedTx
 constructTransaction ctx wid txCtx sel = do
-    mXPub <- fmap (fmap fst3) $ withExceptT ErrConstructTxNoSuchWallet $
+    rewardAcct <- withExceptT ErrConstructTxNoSuchWallet $
         readRewardAccount @ctx @s @k ctx wid
     eraPP <- liftIO $ (,) <$> currentNodeEra nl <*> currentProtocolParameters nl
     withExceptT ErrConstructTxSign $ ExceptT $ pure $
-        mkTransactionBody tl eraPP mXPub txCtx sel
+        mkTransactionBody tl eraPP rewardAcct txCtx sel
   where
     tl = ctx ^. transactionLayer @k
     nl = ctx ^. networkLayer

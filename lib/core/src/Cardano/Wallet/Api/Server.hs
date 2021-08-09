@@ -14,6 +14,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- |
 -- Copyright: © 2018-2020 IOHK
@@ -501,8 +502,6 @@ import Data.Text.Class
     ( FromText (..), ToText (..) )
 import Data.Time
     ( UTCTime )
-import Data.Tuple.Extra
-    ( snd3, thd3 )
 import Data.Type.Equality
     ( type (==) )
 import Data.Word
@@ -1552,7 +1551,6 @@ selectCoinsForJoin
         , DelegationAddress n k
         , MkKeyFingerprint k (Proxy n, k 'AddressK XPub)
         , SoftDerivation k
-        , WalletKey k
         , GetRewardAccount s k
         , Typeable n
         )
@@ -1586,24 +1584,24 @@ selectCoinsForJoin ctx knownPools getPoolStatus pid wid = do
 
         actionPath <- liftHandler $ rewardActionPath @_ @s @k wrk wid action
 
-        pure $ mkApiCoinSelection (maybeToList deposit) actionPath Nothing utx
+        pure $ mkApiCoinSelection (maybeToList deposit) (Just actionPath) Nothing utx
 
 rewardActionPath
     :: forall ctx s k.
         ( ctx ~ ApiLayer s k
         , GetRewardAccount s k
-        , WalletKey k
         )
     => WorkerCtx ctx
     -> WalletId
     -> DelegationAction
-    -> ExceptT ErrReadRewardAccount IO (Maybe (DelegationAction, NonEmpty DerivationIndex))
+    -> ExceptT ErrReadRewardAccount IO (NonEmpty DerivationIndex, DelegationAction)
 rewardActionPath ctx wid action = do
     res <- withExceptT ErrReadRewardAccountNoSuchWallet $
-        W.readRewardAccount @_ @s @k ctx wid
-    case res of
-        Just _ -> pure $ ((action,) . thd3) <$> res
-        Nothing -> throwE ErrReadRewardAccountNotAShelleyWallet
+        W.readRewardAccountDerivation @_ @s @k ctx wid
+    maybe
+        (throwE ErrReadRewardAccountNotAShelleyWallet)
+        (pure . fmap (const action))
+        res
 
 selectCoinsForQuit
     :: forall ctx s n k.
@@ -1613,7 +1611,6 @@ selectCoinsForQuit
         , MkKeyFingerprint k (Proxy n, k 'AddressK XPub)
         , SoftDerivation k
         , Typeable n
-        , WalletKey k
         , GetRewardAccount s k
         )
     => ctx
@@ -1636,7 +1633,7 @@ selectCoinsForQuit ctx (ApiT wid) = do
 
         actionPath <- liftHandler $ rewardActionPath @_ @s @k wrk wid action
 
-        pure $ mkApiCoinSelection [] actionPath Nothing utx
+        pure $ mkApiCoinSelection [] (Just actionPath) Nothing utx
 
 {-------------------------------------------------------------------------------
                                      Assets
@@ -2293,7 +2290,6 @@ listStakeKeys
         ( ctx ~ ApiLayer s k
         , s ~ SeqState n k
         , HasNetworkLayer IO ctx
-        , WalletKey k
         , GetRewardAccount s k
         )
     => (Address -> Maybe RewardAccount)
@@ -2305,11 +2301,11 @@ listStakeKeys lookupStakeRef ctx (ApiT wid) = do
             (wal, meta, pending) <- W.readWallet @_ @s @k wrk wid
             let utxo = availableUTxO @s pending wal
 
-            mourAccount <- fmap snd3 <$> W.readRewardAccount @_ @s @k wrk wid
+            mourAccount <- W.readRewardAccount @_ @s @k wrk wid
             ourApiDelegation <- liftIO $ toApiWalletDelegation (meta ^. #delegation)
                 (unsafeExtendSafeZone (timeInterpreter $ ctx ^. networkLayer))
             let ourKeys = case mourAccount of
-                    Just acc -> [(acc, 0, ourApiDelegation)]
+                    Just acct -> [(acct, 0, ourApiDelegation)]
                     Nothing -> []
 
             liftIO $ listStakeKeys' @n
@@ -2715,7 +2711,7 @@ mkRewardAccountBuilder ctx wid withdrawal = do
             (getRawKey $ deriveRewardAccount @k pwdP rootK, pwdP)
 
     withWorkerCtx ctx wid liftE liftE $ \wrk -> do
-        hasRewardAccounts <- liftHandler $ W.readRewardAccount @_ @s @k wrk wid
+        hasRewardAccounts <- liftHandler $ W.readRewardAccountDerivation @_ @s @k wrk wid
         case (hasRewardAccounts, withdrawal) of
             (Nothing, Just _) ->
                 liftHandler $ throwE ErrReadRewardAccountNotAShelleyWallet
@@ -2723,7 +2719,7 @@ mkRewardAccountBuilder ctx wid withdrawal = do
             (_, Nothing) ->
                 pure (NoWithdrawal, selfRewardCredentials)
 
-            (Just (_, acct, path), Just SelfWithdrawal) -> do
+            (Just (path, (_xpub, acct)), Just SelfWithdrawal) -> do
                 wdrl <- liftHandler $ W.queryRewardBalance @_ wrk acct
                 (, selfRewardCredentials) . WithdrawalSelf acct path
                     <$> liftIO (W.readNextWithdrawal @_ @k wrk wdrl)
@@ -2745,7 +2741,7 @@ mkApiCoinSelection
         , withdrawal ~ (RewardAccount, Coin, NonEmpty DerivationIndex)
         )
     => [Coin]
-    -> Maybe (DelegationAction, NonEmpty DerivationIndex)
+    -> Maybe (NonEmpty DerivationIndex, DelegationAction)
     -> Maybe W.TxMetadata
     -> UnsignedTx input output change withdrawal
     -> ApiCoinSelection n
@@ -2760,25 +2756,22 @@ mkApiCoinSelection deps mcerts meta (UnsignedTx inputs outputs change wdrls) =
         (ApiBytesT . serialiseToCBOR <$> meta)
   where
     mkCertificates
-        :: DelegationAction
-        -> NonEmpty DerivationIndex
+        :: NonEmpty DerivationIndex
+        -> DelegationAction
         -> NonEmpty Api.ApiCertificate
-    mkCertificates action xs =
-        case action of
-            Join pid -> NE.fromList
-                [ Api.JoinPool apiStakePath (ApiT pid)
-                ]
+    mkCertificates (fmap ApiT -> stakePath) = \case
+        Join pid -> NE.fromList
+            [ Api.JoinPool stakePath (ApiT pid)
+            ]
 
-            RegisterKeyAndJoin pid -> NE.fromList
-                [ Api.RegisterRewardAccount apiStakePath
-                , Api.JoinPool apiStakePath (ApiT pid)
-                ]
+        RegisterKeyAndJoin pid -> NE.fromList
+            [ Api.RegisterRewardAccount stakePath
+            , Api.JoinPool stakePath (ApiT pid)
+            ]
 
-            Quit -> NE.fromList
-                [ Api.QuitPool apiStakePath
-                ]
-      where
-        apiStakePath = ApiT <$> xs
+        Quit -> NE.fromList
+            [ Api.QuitPool stakePath
+            ]
 
     mkApiCoinSelectionInput :: input -> ApiCoinSelectionInput n
     mkApiCoinSelectionInput

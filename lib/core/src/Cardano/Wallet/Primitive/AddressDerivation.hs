@@ -507,7 +507,7 @@ class GetRewardAccount s k where
     -- this kind of address derivation state.
     getRewardAccount
         :: s -- ^ Address derivation state.
-        -> Maybe (k 'AddressK XPub, RewardAccount, NonEmpty DerivationIndex)
+        -> Maybe (NonEmpty DerivationIndex, (k 'AddressK XPub, RewardAccount))
     getRewardAccount _ = Nothing
 
 -- | Derive a reward account from a root private key. It is agreed by standard

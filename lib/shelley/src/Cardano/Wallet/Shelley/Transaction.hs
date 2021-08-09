@@ -37,7 +37,7 @@ module Cardano.Wallet.Shelley.Transaction
     , estimateTxCost
     , estimateTxSize
     , mkByronWitness
-    , mkShelleyWitness
+    , mkShelleyKeyWitness
     , mkTxSkeleton
     , toCardanoTxBody
     , txConstraints
@@ -58,8 +58,6 @@ import Cardano.Api
     , ShelleyBasedEra (..)
     , cardanoEraStyle
     )
-import Cardano.Crypto.Wallet
-    ( XPub )
 import Cardano.Wallet.Primitive.AddressDerivation
     ( Depth (..), RewardAccount (..), WalletKey (..) )
 import Cardano.Wallet.Primitive.AddressDerivation.Byron
@@ -67,7 +65,7 @@ import Cardano.Wallet.Primitive.AddressDerivation.Byron
 import Cardano.Wallet.Primitive.AddressDerivation.Icarus
     ( IcarusKey )
 import Cardano.Wallet.Primitive.AddressDerivation.Shelley
-    ( ShelleyKey, toRewardAccountRaw )
+    ( ShelleyKey )
 import Cardano.Wallet.Primitive.CoinSelection.MA.RoundRobin
     ( SelectionCriteria (..)
     , SelectionLimit (..)
@@ -109,6 +107,7 @@ import Cardano.Wallet.Shelley.Compatibility
     ( fromCardanoTx
     , fromShelleyTxId
     , maxTokenBundleSerializedLengthBytes
+    , rewardAccountFromStakeAddress
     , toAllegraTxOut
     , toAlonzoTxOut
     , toCardanoLovelace
@@ -136,6 +135,7 @@ import Cardano.Wallet.Transaction
     , TransactionCtx (..)
     , TransactionLayer (..)
     , keyStoreLookup
+    , keyStoreLookupWithdrawal
     , withdrawalToCoin
     )
 import Data.Bifunctor
@@ -254,7 +254,7 @@ mkSignedShelleyTransaction
     -> SignTransactionResult (k 'AddressK XPrv) (Cardano.KeyWitness era) (Cardano.Tx era)
 mkSignedShelleyTransaction networkId keyStore tx = SignTransactionResult
     { tx = Cardano.makeSignedTransaction
-        (mapMaybe witness addrWits ++ wdrlWits)
+        (mapMaybe witness addrWits ++ map snd wdrlWits)
         body
     , addressWitnesses = addrWits
     , withdrawalWitnesses = wdrlWits
@@ -269,17 +269,21 @@ mkSignedShelleyTransaction networkId keyStore tx = SignTransactionResult
     addrWits = map (keyStoreLookup keyStore mkWit) selectedInputs
 
     mkWit (fmap getRawKey -> sk) addr = case txWitnessTagFor @k of
-        TxWitnessShelleyUTxO -> mkShelleyWitness body sk
+        TxWitnessShelleyUTxO -> mkShelleyKeyWitness body sk
         TxWitnessByronUTxO Icarus -> mkByronWitness body networkId Nothing sk
         TxWitnessByronUTxO Byron -> mkByronWitness body networkId (Just addr) sk
 
-    areWdrls = Cardano.txWithdrawals txBodyContent /= Cardano.TxWithdrawalsNone
-    wdrlWits = case txWitnessTagFor @k of
-        TxWitnessShelleyUTxO ->
-            [ mkShelleyWitness body stakeCred
-            | areWdrls, Just stakeCred <- [view #stakeCreds keyStore] ]
-        TxWitnessByronUTxO{} -> []
+    wdrls = case Cardano.txWithdrawals txBodyContent of
+        Cardano.TxWithdrawalsNone -> []
+        Cardano.TxWithdrawals _era ws -> case txWitnessTagFor @k of
+            TxWitnessShelleyUTxO ->
+                [ rewardAccountFromStakeAddress addr
+                | (addr, _lovelace, _buildTx) <- ws ]
+            TxWitnessByronUTxO{} -> []
 
+    wdrlWits = mapMaybe
+        (keyStoreLookupWithdrawal keyStore (mkShelleyKeyWitness body))
+        wdrls
 
 newTransactionLayer
     :: forall k.
@@ -312,7 +316,7 @@ _decodeSealedTx (cardanoTx -> InAnyCardanoEra _era tx) = fromCardanoTx tx
 _mkTransactionBody
     :: Cardano.NetworkId
     -> (AnyCardanoEra, ProtocolParameters)
-    -> Maybe XPub
+    -> Maybe RewardAccount
     -> TransactionCtx
     -> SelectionResult TxOut
     -> Either ErrSignTx SealedTx
@@ -327,23 +331,22 @@ _mkTransactionBody networkId (e@(AnyCardanoEra era), pp) rewardAcct ctx cs =
 mkShelleyTransactionBody
     :: forall era. Cardano.IsCardanoEra era
     => Cardano.NetworkId
-    -> Maybe XPub
+    -> Maybe RewardAccount
     -> ProtocolParameters
     -> TransactionCtx
     -> SelectionResult TxOut
     -> ShelleyBasedEra era
     -> Either ErrSignTx (Cardano.TxBody era)
-mkShelleyTransactionBody networkId mStakeXPub pp ctx cs era =
+mkShelleyTransactionBody networkId rewardAcct pp ctx cs era =
     toCardanoTxBody era payload ttl wdrls cs fee
   where
     payload = TxPayload (view #txMetadata ctx) certs
     ttl = txTimeToLive ctx
     wdrl = withdrawalToCoin $ view #txWithdrawal ctx
     wdrls = maybe [] (mkWithdrawals networkId wdrl) rewardAcct
-    rewardAcct = toRewardAccountRaw <$> mStakeXPub
 
-    (deposits, certs) = case (view #txDelegationAction ctx, mStakeXPub) of
-        (Just d, Just xpub) -> (getDeposits d, mkDelegationCertificates d xpub)
+    (deposits, certs) = case (view #txDelegationAction ctx, rewardAcct) of
+        (Just d, Just a) -> (getDeposits d, mkDelegationCertificates a d)
         _ -> (Coin 0, mempty)
 
     feeGap = selectionDelta txOutCoin cs
@@ -365,20 +368,19 @@ mkShelleyTransactionBody networkId mStakeXPub pp ctx cs era =
             ]
 
 mkDelegationCertificates
-    :: DelegationAction
+    :: RewardAccount
+        -- Reward account public key hash
+    -> DelegationAction
         -- Pool Id to which we're planning to delegate
-    -> XPub
-        -- Reward account public key
     -> [Cardano.Certificate]
-mkDelegationCertificates da accXPub =
-    case da of
-       Join poolId ->
-               [ toStakePoolDlgCert accXPub poolId ]
-       RegisterKeyAndJoin poolId ->
-               [ toStakeKeyRegCert  accXPub
-               , toStakePoolDlgCert accXPub poolId
-               ]
-       Quit -> [toStakeKeyDeregCert accXPub]
+mkDelegationCertificates rewardAcct = \case
+   Join poolId ->
+           [ toStakePoolDlgCert rewardAcct poolId ]
+   RegisterKeyAndJoin poolId ->
+           [ toStakeKeyRegCert  rewardAcct
+           , toStakePoolDlgCert rewardAcct poolId
+           ]
+   Quit -> [toStakeKeyDeregCert rewardAcct]
 
 _calcMinimumCoinValue
     :: ProtocolParameters
@@ -1268,12 +1270,12 @@ decryptSigningKey :: DecryptedSigningKey XPrv -> XPrv
 decryptSigningKey (DecryptedSigningKey sk pwd) =
     Crypto.HD.xPrvChangePass pwd BS.empty sk
 
-mkShelleyWitness
+mkShelleyKeyWitness
     :: IsShelleyBasedEra era
     => Cardano.TxBody era
     -> DecryptedSigningKey XPrv
     -> Cardano.KeyWitness era
-mkShelleyWitness body key =
+mkShelleyKeyWitness body key =
     Cardano.makeShelleyKeyWitness body key'
   where
     key' = Cardano.WitnessPaymentExtendedKey

@@ -120,7 +120,7 @@ import Cardano.Wallet.Shelley.Transaction
     , estimateTxCost
     , estimateTxSize
     , mkByronWitness
-    , mkShelleyWitness
+    , mkShelleyKeyWitness
     , mkTxSkeleton
     , newTransactionLayer
     , toCardanoTxBody
@@ -707,7 +707,7 @@ makeShelleyTx era testCase = Cardano.makeSignedTransaction addrWits unsigned
     fee = selectionDelta txOutCoin cs
     payload = TxPayload md mempty
     Right unsigned = toCardanoTxBody era payload slotNo [] cs fee
-    addrWits = map (mkShelleyWitness unsigned) pairs
+    addrWits = map (mkShelleyKeyWitness unsigned) pairs
     cs = SelectionResult
         { inputsSelected = NE.fromList inps
         , extraCoinSource = Nothing
