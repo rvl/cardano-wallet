@@ -8,7 +8,7 @@ contact_links:
       Users: Please feel welcome to ask for help from the IOHK
       Technical Support Desk. They are knowledgeable about commonly
       experienced issues and workarounds.
-  - name: 🗩 Cardano Forums
+  - name: 🗨 Cardano Forums
     url: https://forum.cardano.org/
     about: |
       General discussion about Cardano and “cardano-wallet”.
@@ -18,6 +18,6 @@ contact_links:
       If you are an application developer seeking assistance with
       using “cardano-wallet” or its associated APIs, please use the
       “Developers” category of the Cardano forums.
-  - name: Security issues
+  - name: ☢️ Security issues
     url: mailto:security@iohk.io
     about: Please report security vulnerabilities here.
