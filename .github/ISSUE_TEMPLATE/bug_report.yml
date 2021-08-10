@@ -40,9 +40,8 @@ body:
     id: version
     attributes:
       label: Version
-      description: |
-        Copy and paste the output of running the CLI command: `cardano-wallet version`.
-      placeholder: 'vYYYY-MM-DD (git revision 0abcdef)'
+      description: Use the output from `cardano-wallet version`.
+      placeholder: vYYYY-MM-DD (git revision 0abcdef)
     validations:
       required: true
   - type: input
@@ -63,8 +62,8 @@ body:
     attributes:
       label: Installation method
       description: |
-        How did you install cardano-wallet? Please provide further
-        information in Description if necessary.
+        How did you install <tt>cardano-wallet</tt>? Please provide
+        further information in Description if necessary.
       options:
         - Built from source
         - Binary from GitHub release page
