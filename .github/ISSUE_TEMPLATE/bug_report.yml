@@ -81,7 +81,7 @@ body:
       description: |
         Which network are you connecting to? It could be one of
         [these deployments](https://hydra.iohk.io/job/Cardano/iohk-nix/cardano-deployment/latest/download/1/index.html) for example.
-      placeholder: Example: mainnet
+      placeholder: 'Example: mainnet'
   - type: textarea
     id: context
     attributes:
