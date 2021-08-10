@@ -9,11 +9,13 @@ body:
 
         Help us understand and replicate the issue by filling in this form.
 
+
         If you are unsure about how to fill out any fields in this
         form, or are don't know whether the behaviour that you see is
         actually a bug, then please contact
         [IOHK Technical Support](https://iohk.zendesk.com/hc/en-us) first,
         and they will guide you through the process.
+
 
         If you know that the issue is already tracked in
         [IOHK Jira](https://jira.iohk.io/) (i.e. has an `ADP-` issue number)
@@ -57,7 +59,9 @@ body:
       label: Platform
       description: >-
         Operating system on which you are running `cardano-wallet`.
+
         Please include the operating system version.
+
 
         For Linux please also specify your distribution name and
         version, and the output of `uname -a`.
@@ -70,7 +74,7 @@ body:
       label: Installation method
       description: >-
         How did you install <tt>cardano-wallet</tt>? Please provide
-        further information in Description if necessary.
+        further information in the _Description_ if necessary.
       options:
         - Built from source
         - Binary from GitHub release page
