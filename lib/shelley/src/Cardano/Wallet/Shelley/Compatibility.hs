@@ -580,6 +580,7 @@ fromShelleyPParams eraInfo pp = W.ProtocolParameters
         MinimumUTxOValue . toWalletCoin $ SLAPI._minUTxOValue pp
     , stakeKeyDeposit = stakeKeyDepositFromPParams pp
     , eras = fromBound <$> eraInfo
+    , maxCollateralInputs = minBound
     }
   where
     fromBound (Bound _relTime _slotNo (EpochNo e)) =
@@ -600,11 +601,11 @@ fromAlonzoPParams eraInfo pp = W.ProtocolParameters
         . toWalletCoin $ Alonzo._coinsPerUTxOWord pp
     , stakeKeyDeposit = stakeKeyDepositFromPParams pp
     , eras = fromBound <$> eraInfo
+    , maxCollateralInputs = unsafeToWord16 $ Alonzo._maxCollateralInputs pp
     }
   where
     fromBound (Bound _relTime _slotNo (EpochNo e)) =
         W.EpochNo $ fromIntegral e
-
 
 -- | Extract the current network decentralization level from the given set of
 -- protocol parameters.
@@ -1071,6 +1072,18 @@ unsafeToWord64 n
     | otherwise = fromIntegral n
   where
     crash x = error ("Internal error: Word64 " ++ x)
+
+-- | Convert an int to 'Word16'.
+--
+-- If this conversion would under/overflow, there is not much we can do except
+-- to hastily exit.
+unsafeToWord16 :: Integral n => n -> Word16
+unsafeToWord16 n
+    | n < 0 = crash "underflow"
+    | n > fromIntegral (maxBound :: Word16) = crash "overflow"
+    | otherwise = fromIntegral n
+  where
+    crash x = error ("Internal error: Word16" ++ x)
 
 fromPoolMetadata :: SL.PoolMetadata -> (W.StakePoolMetadataUrl, W.StakePoolMetadataHash)
 fromPoolMetadata meta =
