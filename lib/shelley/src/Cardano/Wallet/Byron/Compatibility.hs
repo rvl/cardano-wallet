@@ -139,7 +139,7 @@ mainnetNetworkParameters = W.NetworkParameters
         , minimumUTxOvalue = W.MinimumUTxOValue $ W.Coin 0
         , stakeKeyDeposit = W.Coin 0
         , eras = W.emptyEraInfo
-        , maxCollateralInputs = 3
+        , maxCollateralInputs = 0
         }
     }
 
