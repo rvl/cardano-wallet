@@ -54,7 +54,7 @@ body:
 
         For Linux please also specify your distribution name and
         version, and the output of `uname -a`.
-      placeholder: Example: macOS Big Sur
+      placeholder: 'Example: macOS Big Sur'
     validations:
       required: true
   - type: dropdown
