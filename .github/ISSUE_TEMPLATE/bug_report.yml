@@ -40,8 +40,9 @@ body:
     id: version
     attributes:
       label: Version
-      description: Copy and paste the output of running the CLI command: `cardano-wallet version`.
-      placeholder: vYYYY-MM-DD (git revision 0abcdef)
+      description: |
+        Copy and paste the output of running the CLI command: `cardano-wallet version`.
+      placeholder: 'vYYYY-MM-DD (git revision 0abcdef)'
     validations:
       required: true
   - type: input
